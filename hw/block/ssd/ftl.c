@@ -634,3 +634,68 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 #endif
 	return max_need_to_emulate_tt; 
 }
+
+int femu_discard_process(struct ssdstate *ssd, uint32_t length, int64_t sector_nb) {
+	struct ssdconf *sc = &(ssd->ssdparams);
+    int64_t SECTOR_NB = sc->SECTOR_NB;
+    int64_t SECTORS_PER_PAGE = sc->SECTORS_PER_PAGE;
+    int EMPTY_TABLE_ENTRY_NB = sc->EMPTY_TABLE_ENTRY_NB;
+
+	if(sector_nb + length > SECTOR_NB){
+		printf("ERROR[%s] Exceed Sector number\n", __FUNCTION__);
+        return FAIL;
+    }
+
+	int64_t lba = sector_nb;
+	int64_t lpn;
+	int64_t old_ppn;
+
+	unsigned int remain = length;
+	unsigned int left_skip = sector_nb % SECTORS_PER_PAGE;
+	unsigned int right_skip;
+	unsigned int write_sects;
+
+	unsigned int ret = FAIL;
+
+    /* 
+     * Coperd: since the whole I/O submission path is single threaded, it's
+     * safe to do this. "blocking_to" means the time we will block the
+     * current I/O to. It will be finally decided by gc timestamps according 
+     * to the GC mode you are using.
+     */
+
+	while(remain > 0){
+
+		if(remain > SECTORS_PER_PAGE - left_skip){
+			right_skip = 0;
+		}
+		else{
+			right_skip = SECTORS_PER_PAGE - left_skip - remain;
+		}
+
+		write_sects = SECTORS_PER_PAGE - left_skip - right_skip;
+
+		//add by hao
+
+		//printf("hao_debug:_FTL_WRITEbbbbbbbbbbbbbbbbbbbbbb %d\n", bloom_temp);
+		lpn = lba / (int64_t)SECTORS_PER_PAGE;
+		old_ppn = GET_MAPPING_INFO(ssd, lpn);
+		//printf("hao_debug:_FTL_WRITE lpn old_ppn %d %d\n",lpn, old_ppn);
+
+		if((left_skip || right_skip) && (old_ppn != -1)){
+            //printf("hao_dubug4444444444444: ssd page partial write\n");
+            /*cur_need_to_emulate_tt = SSD_PAGE_PARTIAL_WRITE(ssd,
+				CALC_FLASH(ssd, old_ppn), CALC_BLOCK(ssd, old_ppn), CALC_PAGE(ssd, old_ppn),
+				CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn), CALC_PAGE(ssd, new_ppn),
+				n_io_info);*/
+		}
+
+		UPDATE_OLD_PAGE_MAPPING(ssd, lpn);
+
+		lba += write_sects;
+		remain -= write_sects;
+		left_skip = 0;
+	}
+
+	return true;
+}

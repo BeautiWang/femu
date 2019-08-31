@@ -1081,6 +1081,8 @@ static uint16_t nvme_dsm(NvmeCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
     uint64_t prp1 = le64_to_cpu(cmd->prp1);
     uint64_t prp2 = le64_to_cpu(cmd->prp2);
 
+    struct ssdstate *ssd = &(n->ssd);
+
     if (dw11 & NVME_DSMGMT_AD) {
         uint16_t nr = (dw10 & 0xff) + 1;
         uint8_t lba_index = NVME_ID_NS_FLBAS_INDEX(ns->id_ns.flbas);
@@ -1115,6 +1117,11 @@ static uint16_t nvme_dsm(NvmeCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
             if (req->status != NVME_SUCCESS)
                 return req->status;
             bitmap_clear(ns->util, slba, nlb);
+
+            //Trim
+            if (n->femu_mode == FEMU_BLACKBOX_MODE) {
+                femu_discard_process(ssd, nlb << data_shift, slba << data_shift);
+            }
         }
     }
     return NVME_SUCCESS;
