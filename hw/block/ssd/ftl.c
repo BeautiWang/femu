@@ -92,6 +92,10 @@ void FTL_INIT(struct ssdstate *ssd)
 
 		INIT_SSD_CONFIG(ssd);
 
+		/* Min LSN and MAX LSN */
+		ssd->min_lsn = INT64_MAX;
+		ssd->max_lsn = INT64_MIN;
+
 		INIT_MAPPING_TABLE(ssd);
 		INIT_INVERSE_MAPPING_TABLE(ssd);
 		INIT_BLOCK_STATE_TABLE(ssd);
@@ -498,6 +502,10 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 	else{
 		ssd->io_alloc_overhead = ALLOC_IO_REQUEST(ssd, sector_nb, length, WRITE, &io_page_nb);
 	}
+
+	ssd->min_lsn = (sector_nb < ssd->min_lsn) ? sector_nb : ssd->min_lsn;
+	ssd->max_lsn = ((sector_nb + length) > ssd->max_lsn) ? (sector_nb + length) : ssd->max_lsn;
+	printf("ssd->min_lsn = %ld   ssd->max_lsn = %ld\n", ssd->min_lsn, ssd->max_lsn);
 
 	int64_t lba = sector_nb;
 	int64_t lpn;

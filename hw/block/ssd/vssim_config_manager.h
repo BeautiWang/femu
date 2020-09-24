@@ -283,6 +283,10 @@ struct ssdstate {
     /* timestamps for channels and chips */
     int64_t *chnl_next_avail_time;
     int64_t *chip_next_avail_time;
+
+    /* record the max/min LSN send to SSD */
+    int64_t min_lsn;
+    int64_t max_lsn;
 };
 
 
