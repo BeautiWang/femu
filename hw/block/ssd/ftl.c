@@ -43,6 +43,7 @@ FILE* fp_ftl_r;
 #endif
 
 extern int64_t blocking_to;
+
 //extern double ssd_util;
 //extern int64_t mygc_cnt, last_gc_cnt;
 
@@ -91,10 +92,7 @@ void FTL_INIT(struct ssdstate *ssd)
         	//printf("[%s] start\n", __FUNCTION__);
 
 		INIT_SSD_CONFIG(ssd);
-
-		/* Min LSN and MAX LSN */
-		ssd->min_lsn = INT64_MAX;
-		ssd->max_lsn = INT64_MIN;
+		INIT_MULTITENANT_CONFIG(ssd);	
 
 		INIT_MAPPING_TABLE(ssd);
 		INIT_INVERSE_MAPPING_TABLE(ssd);
@@ -502,10 +500,10 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 	else{
 		ssd->io_alloc_overhead = ALLOC_IO_REQUEST(ssd, sector_nb, length, WRITE, &io_page_nb);
 	}
-
-	ssd->min_lsn = (sector_nb < ssd->min_lsn) ? sector_nb : ssd->min_lsn;
-	ssd->max_lsn = ((sector_nb + length) > ssd->max_lsn) ? (sector_nb + length) : ssd->max_lsn;
-	printf("ssd->min_lsn = %ld   ssd->max_lsn = %ld\n", ssd->min_lsn, ssd->max_lsn);
+	// if(sector_nb > 2048)
+	// 	ssd->min_lsn = (sector_nb < ssd->min_lsn) ? sector_nb : ssd->min_lsn;
+	// ssd->max_lsn = ((sector_nb + length) > ssd->max_lsn) ? (sector_nb + length) : ssd->max_lsn;
+	// printf("ssd->min_lsn = %ld   ssd->max_lsn = %ld\n", ssd->min_lsn, ssd->max_lsn);
 
 	int64_t lba = sector_nb;
 	int64_t lpn;
@@ -706,4 +704,63 @@ int femu_discard_process(struct ssdstate *ssd, uint32_t length, int64_t sector_n
 	}
 
 	return true;
+}
+
+void myPanic(const char func[], const char msg[]) {
+    printf("Error[%s], %s\n", func, msg);
+}
+
+int32_t sum(const int array[]) {
+    int32_t res = 0;
+    int32_t array_length = sizeof(array) / sizeof(int32_t);
+    for (int32_t i = 0; i < array_length; ++i) {
+        res += array[i];
+    }
+    return res;
+}
+
+bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd) {
+    struct ssdconf *sc = &(ssd->ssdparams);
+    int user_channel = USER_CHANNEL_ARRAY;
+    int config_channel_num = sum(user_channel);
+    int channel_num = sc->CHANNEL_NB;
+    if (config_channel_num != channel_num) {
+        myPanic(__FUNCTION__, "Channel Number is illegal!");
+        return false;
+    }
+    return true;
+}
+
+void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
+#ifdef DEBUG
+    assert(CHECK_MULTITENANT_LEGAL(ssd));
+#endif //DEBUG
+    ssd->user_num = USER_NUM;
+    int user_channel[] = USER_CHANNEL_ARRAY;
+#ifdef DEBUG
+    assert(ssd->user_num != 0);
+#endif  //DEBUG
+    ssd->user = (struct USER_INFO *)malloc(ssd->user_num * sizeof(struct USER_INFO));
+    if(ssd->user == NULL) {
+        myPanic(__FUNCTION__, "ssd->user malloc Error!");
+        exit(0);
+    }
+    memset(ssd->user, 0, ssd->user_num * sizeof(struct USER_INFO));
+
+    struct USER_INFO *user_head = ssd->user;
+    struct ssdconf *sc = &(ssd->ssdparams);
+    int page_per_channel = sc->PAGE_NB * sc->BLOCK_NB * (sc->FLASH_NB / sc->CHANNEL_NB);
+    int started_channel = 0;
+    for (int i = 0; i < USER_NUM; ++i) {
+        user_head->channel_num = user_channel[i];
+        user_head->started_channel = started_channel;
+        user_head->ended_channel = started_channel + user_head->channel_num - 1;
+        user_head->minLPN = started_channel * page_per_channel;
+        user_head->maxLPN = (user_head->ended_channel + 1) * page_per_channel - 1;
+
+        user_head->free_block_num = sc->BLOCK_NB * (sc->FLASH_NB / sc->CHANNEL_NB) * user_channel[i];
+        user_head->free_page_num = page_per_channel * user_channel[i];
+
+        user_head ++;
+    }
 }

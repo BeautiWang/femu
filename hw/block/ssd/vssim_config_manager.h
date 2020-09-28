@@ -285,8 +285,12 @@ struct ssdstate {
     int64_t *chip_next_avail_time;
 
     /* record the max/min LSN send to SSD */
-    int64_t min_lsn;
-    int64_t max_lsn;
+    // int64_t min_lsn;
+    // int64_t max_lsn;
+
+    /* Mutli-Tenant */
+    int user_num;
+    struct USER_INFO *user;
 };
 
 

@@ -21,6 +21,9 @@
 #define CHANNEL_BLOCKING    2
 #define CHIP_BLOCKING       3
 
+#define USER_NUM 2
+#define USER_CHANNEL_ARRAY {4, 4}
+
 //extern int GC_MODE;
 //extern int64_t *gc_slot;
 
@@ -78,6 +81,9 @@
 
 /* HEADER - VSSIM CONFIGURATION */
 #include "vssim_config_manager.h"
+
+/* HEADER - MULTI TENANT */
+#include "multitenant.h"
 
 /* HEADER - FTL MODULE */
 #include "ftl.h"
