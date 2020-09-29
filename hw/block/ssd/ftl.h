@@ -15,7 +15,6 @@
 #include <assert.h>
 
 struct ssdstate;
-#define DEBUG
 //extern int64_t blocking_to;
 
 void FTL_INIT(struct ssdstate *ssd);
@@ -29,7 +28,8 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 
 
 
-
+/***********************************/
+/* multi-tenant */
 
 struct USER_INFO {
     int32_t channel_num;
@@ -132,5 +132,12 @@ int32_t sum(const int array[]);
 bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd);
 void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd);
 
+/* debug */
+#define DEBUG
+#ifdef DEBUG
+
+void PRINT_USER_CONFIG(struct ssdstate *ssd);
+
+#endif //DEBUG
 
 #endif

@@ -94,6 +94,10 @@ void FTL_INIT(struct ssdstate *ssd)
 		INIT_SSD_CONFIG(ssd);
 		INIT_MULTITENANT_CONFIG(ssd);	
 
+#ifdef DEBUG
+		//PRINT_USER_CONFIG(ssd);
+#endif
+
 		INIT_MAPPING_TABLE(ssd);
 		INIT_INVERSE_MAPPING_TABLE(ssd);
 		INIT_BLOCK_STATE_TABLE(ssd);
@@ -721,7 +725,7 @@ int32_t sum(const int array[]) {
 
 bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd) {
     struct ssdconf *sc = &(ssd->ssdparams);
-    int user_channel = USER_CHANNEL_ARRAY;
+    int user_channel[] = USER_CHANNEL_ARRAY;
     int config_channel_num = sum(user_channel);
     int channel_num = sc->CHANNEL_NB;
     if (config_channel_num != channel_num) {
@@ -760,7 +764,28 @@ void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
 
         user_head->free_block_num = sc->BLOCK_NB * (sc->FLASH_NB / sc->CHANNEL_NB) * user_channel[i];
         user_head->free_page_num = page_per_channel * user_channel[i];
-
+		started_channel += user_channel[i];
         user_head ++;
     }
 }
+
+
+#ifdef DEBUG
+
+void PRINT_USER_CONFIG(struct ssdstate *ssd){
+	struct ssdconf *sc = &(ssd->ssdparams);
+	int user_num = ssd->user_num;
+	struct USER_INFO *user_head = ssd->user;
+	for (int i = 0; i < user_num; ++i) {
+		printf("********************************\n");
+		printf("User id: %d\n", i);
+		printf("started channel = %d, ended channel = %d, channel num = %d\n", user_head->started_channel,
+			user_head->ended_channel, user_head->channel_num);
+		printf("free block = %d, free page = %d\n", user_head->free_block_num, user_head->free_page_num);
+		printf("********************************\n");
+		user_head ++;
+	}
+	return;
+}
+
+#endif //DEBUG
