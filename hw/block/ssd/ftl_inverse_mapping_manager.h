@@ -28,7 +28,8 @@ typedef struct block_state_entry
 	int valid_page_nb;
 	int type;
 	unsigned int erase_count;
-	char* valid_array;
+	int* valid_array;	//-1 means clean, 0 means invalid and n(n>0) means valid.
+	//char* valid_array;
 
 }block_state_entry;
 
@@ -78,7 +79,7 @@ void TERM_EMPTY_BLOCK_LIST(struct ssdstate *ssd);
 void TERM_VICTIM_BLOCK_LIST(struct ssdstate *ssd);
 void TERM_VALID_ARRAY(struct ssdstate *ssd);
 
-empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int mode, int mapping_index);
+empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int user, int mode, int mapping_index);
 int INSERT_EMPTY_BLOCK(struct ssdstate *ssd, unsigned int phy_flash_nb, unsigned int phy_block_nb);
 
 int INSERT_VICTIM_BLOCK(struct ssdstate *ssd, empty_block_entry* full_block);

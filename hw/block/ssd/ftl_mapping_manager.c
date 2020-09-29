@@ -61,7 +61,7 @@ int64_t GET_MAPPING_INFO(struct ssdstate *ssd, int64_t lpn)
 	return ppn;
 }
 
-int GET_NEW_PAGE(struct ssdstate *ssd, int mode, int mapping_index, int64_t* ppn)
+int GET_NEW_PAGE(struct ssdstate *ssd, int user, int mode, int mapping_index, int64_t* ppn)
 {
     struct ssdconf *sc = &(ssd->ssdparams);
     int BLOCK_NB = sc->BLOCK_NB;
@@ -70,13 +70,13 @@ int GET_NEW_PAGE(struct ssdstate *ssd, int mode, int mapping_index, int64_t* ppn
 
 	empty_block_entry* curr_empty_block;
 
-	curr_empty_block = GET_EMPTY_BLOCK(ssd, mode, mapping_index);
+	curr_empty_block = GET_EMPTY_BLOCK(ssd, user, mode, mapping_index);
 
 	/* If the flash memory has no empty block,
                 Get empty block from the other flash memories */
         if(mode == VICTIM_INCHIP && curr_empty_block == NULL){
                 /* Try again */
-                curr_empty_block = GET_EMPTY_BLOCK(ssd, VICTIM_OVERALL, mapping_index);
+                curr_empty_block = GET_EMPTY_BLOCK(ssd, user, VICTIM_OVERALL, mapping_index);
         }
 
 	if(curr_empty_block == NULL){

@@ -34,6 +34,7 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 struct USER_INFO {
     int32_t channel_num;
     int32_t started_channel;
+    int32_t next_write_channel;
     int32_t ended_channel;
     int64_t minLPN;
     int64_t maxLPN;
@@ -124,20 +125,24 @@ struct USER_INFO {
     double avg_write_latency;
 };
 
-/* Assitet Functions */
+/* Assitent Functions */
 void myPanic(const char func[], const char msg[]);
 int32_t sum(const int array[]);
 
-/* Check if the configuration is legal */
-bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd);
+
+/* Multi-tenant */
 void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd);
+int CAL_USER_BY_CHANNEL(struct ssdstate *ssd, int channel);
+
+/* Deduplication */
+void INIT_zipf_AND_fingerprint(struct ssdstate *ssd);
+
 
 /* debug */
 #define DEBUG
 #ifdef DEBUG
-
 void PRINT_USER_CONFIG(struct ssdstate *ssd);
-
+bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd); /* Check if the configuration is legal */
 #endif //DEBUG
 
 #endif

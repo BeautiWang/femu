@@ -92,8 +92,8 @@ void FTL_INIT(struct ssdstate *ssd)
         	//printf("[%s] start\n", __FUNCTION__);
 
 		INIT_SSD_CONFIG(ssd);
-		INIT_MULTITENANT_CONFIG(ssd);	
-
+		INIT_MULTITENANT_CONFIG(ssd);
+		INIT_zipf_AND_fingerprint(ssd);
 #ifdef DEBUG
 		//PRINT_USER_CONFIG(ssd);
 #endif
@@ -723,6 +723,7 @@ int32_t sum(const int array[]) {
     return res;
 }
 
+#ifdef DEBUG
 bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd) {
     struct ssdconf *sc = &(ssd->ssdparams);
     int user_channel[] = USER_CHANNEL_ARRAY;
@@ -734,6 +735,7 @@ bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd) {
     }
     return true;
 }
+#ifndef //DEBUG
 
 void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
 #ifdef DEBUG
@@ -759,6 +761,7 @@ void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
         user_head->channel_num = user_channel[i];
         user_head->started_channel = started_channel;
         user_head->ended_channel = started_channel + user_head->channel_num - 1;
+		user_head->next_write_channel = started_channel;
         user_head->minLPN = started_channel * page_per_channel;
         user_head->maxLPN = (user_head->ended_channel + 1) * page_per_channel - 1;
 
@@ -769,6 +772,22 @@ void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
     }
 }
 
+int CAL_USER_BY_CHANNEL(struct ssdstate *ssd, int channel) {
+	 int res = -1;
+	 struct USER_INFO *user_head = ssd->user;
+	 int user_num = ssd->user_num;
+	 
+	 for (int i = 0; i < user; ++i) {
+		 if (channel >= user_head->started_channel 
+		 	&& channel <= user_head->ended_channel) {
+				 res = i;
+				 break;
+		 }
+		 user_head ++;
+	 }
+	 if(res == -1) myPanic(__FUNCTION__, "Cannot find the user");
+	 return res;
+}
 
 #ifdef DEBUG
 
@@ -789,3 +808,28 @@ void PRINT_USER_CONFIG(struct ssdstate *ssd){
 }
 
 #endif //DEBUG
+
+void INIT_zipf_AND_fingerprint(struct ssdstate *ssd)
+{
+	int i;
+	double a=0.2, sum = 0.0;
+
+	ssd->Pzipf=(double *)calloc(UNIQUE_PAGE_NB + 1, sizeof(double));
+	ssd->fingerprint=(int64_t*)calloc(UNIQUE_PAGE_NB+1, sizeof(int64_t));
+
+	for(i=0;i<=UNIQUE_PAGE_NB;i++)
+	{
+		ssd->Pzipf[i]=0.0;
+		ssd->fingerprint[i]=-1;
+	}
+
+	for(i=1;i<=UNIQUE_PAGE_NB;i++)
+	{
+		sum+=1/pow((double)i, a);
+	}
+
+	for(i=1;i<=UNIQUE_PAGE_NB;i++)
+	{
+		ssd->Pzipf[i]=ssd->Pzipf[i-1]+1/pow((double)i, a)/sum;
+	}
+}

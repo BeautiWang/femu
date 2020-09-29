@@ -72,12 +72,12 @@ void INIT_VALID_ARRAY(struct ssdstate *ssd)
 
 	int i;
 	block_state_entry* curr_b_s_entry = (block_state_entry*)block_state_table;
-	char* valid_array;
+	int* valid_array;
 
 	FILE* fp = fopen("./data/valid_array.dat","r");
 	if(fp != NULL){
 		for(i=0;i<BLOCK_MAPPING_ENTRY_NB;i++){
-			valid_array = (char*)calloc(PAGE_NB, sizeof(char));
+			valid_array = (char*)calloc(PAGE_NB, sizeof(int));
 			fread(valid_array, sizeof(char), PAGE_NB, fp);
 			curr_b_s_entry->valid_array = valid_array;
 
@@ -86,10 +86,11 @@ void INIT_VALID_ARRAY(struct ssdstate *ssd)
 	}
 	else{
 		for(i=0;i<BLOCK_MAPPING_ENTRY_NB;i++){
-			valid_array = (char*)calloc(PAGE_NB, sizeof(char));
-			memset(valid_array,0,PAGE_NB);
+			valid_array = (char*)calloc(PAGE_NB, sizeof(int));
+			for (int i = 0; i < PAGE_NB; ++i) {
+				valid_array[i] = -1;
+			}
 			curr_b_s_entry->valid_array = valid_array;
-
 			curr_b_s_entry += 1;
 		}			
 	}
@@ -404,7 +405,7 @@ void TERM_VICTIM_BLOCK_LIST(void)
 }
 #endif
 
-empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int mode, int mapping_index)
+empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int user, int mode, int mapping_index)
 {
     struct ssdconf *sc = &(ssd->ssdparams);
     void *empty_block_list = ssd->empty_block_list;
@@ -422,16 +423,19 @@ empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int mode, int mapping_i
     empty_block_entry* curr_empty_block;
     empty_block_root* curr_root_entry;
 
+	struct USER_INFO *user_head = &(ssd->user[user]);
+
     while(ssd->total_empty_block_nb != 0){
 
         if(mode == VICTIM_OVERALL){
-            curr_root_entry = (empty_block_root*)empty_block_list + ssd->empty_block_table_index;
+            curr_root_entry = (empty_block_root*)empty_block_list + user_head->next_write_channel;
 
             if(curr_root_entry->empty_block_nb == 0){
-                ssd->empty_block_table_index++;
-                if(ssd->empty_block_table_index == EMPTY_TABLE_ENTRY_NB){
-                    ssd->empty_block_table_index = 0;
-                }
+                user_head->next_write_channel ++;
+				if (user_head->next_write_channel > user_head->ended_channel) {
+					assert(user_head->next_write_channel == user_head->ended_channel + 1);
+					user_head->next_write_channel = user_head->started_channel;
+				}
                 continue;
             }
             else{
@@ -454,16 +458,22 @@ empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int mode, int mapping_i
                     /* Update The total number of empty block */
                     ssd->total_empty_block_nb--;
 
-                    ssd->empty_block_table_index++;
-                    if(ssd->empty_block_table_index == EMPTY_TABLE_ENTRY_NB){
-                        ssd->empty_block_table_index = 0;
-                    }
+					/* Update The User Pyisical Resources Statistic. */
+					user_head->free_block_num--;
+					user_head->used_block_num++;
+
+                    user_head->next_write_channel ++;
+					if (user_head->next_write_channel > user_head->ended_channel) {
+						assert(user_head->next_write_channel == user_head->ended_channel + 1);
+						user_head->next_write_channel = user_head->started_channel;
+					}
                     continue;
                 }
-                ssd->empty_block_table_index++;
-                if(ssd->empty_block_table_index == EMPTY_TABLE_ENTRY_NB){
-                    ssd->empty_block_table_index = 0;
-                }
+                user_head->next_write_channel ++;
+				if (user_head->next_write_channel > user_head->ended_channel) {
+					assert(user_head->next_write_channel == user_head->ended_channel + 1);
+					user_head->next_write_channel = user_head->started_channel;
+				}
                 return curr_empty_block;
             }
         }

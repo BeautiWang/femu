@@ -291,6 +291,10 @@ struct ssdstate {
     /* Mutli-Tenant */
     int user_num;
     struct USER_INFO *user;
+
+    /* Deduplication */
+    double *Pzipf;
+    int64_t *fingerprint;
 };
 
 
