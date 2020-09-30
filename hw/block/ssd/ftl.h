@@ -133,10 +133,11 @@ int32_t sum(const int array[]);
 /* Multi-tenant */
 void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd);
 int CAL_USER_BY_CHANNEL(struct ssdstate *ssd, int channel);
+int CAL_USER_BY_LPN(struct ssdstate *ssd, int64_t lpn);
 
 /* Deduplication */
 void INIT_zipf_AND_fingerprint(struct ssdstate *ssd);
-
+int64_t FP_GENERATOR(struct ssdstate *ssd, int64_t lpn);
 
 /* debug */
 #define DEBUG

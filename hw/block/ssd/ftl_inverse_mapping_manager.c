@@ -800,16 +800,16 @@ int UPDATE_BLOCK_STATE_ENTRY(struct ssdstate *ssd, unsigned int phy_flash_nb, un
 	int valid_count = 0;
 	block_state_entry* b_s_entry = GET_BLOCK_STATE_ENTRY(ssd, phy_flash_nb, phy_block_nb);
 
-	char* valid_array = b_s_entry->valid_array;
+	int* valid_array = b_s_entry->valid_array;
 
 	if(valid == VALID){
-		valid_array[phy_page_nb] = 'V';
+		valid_array[phy_page_nb] += 1;
 	}
 	else if(valid == INVALID){
-		valid_array[phy_page_nb] = 'I';
+		valid_array[phy_page_nb] -= 1;
 	}
 	else if(valid == 0){
-		valid_array[phy_page_nb] = '0';
+		valid_array[phy_page_nb] = -1;
 	}
 	else{
 		printf("ERROR[%s] Wrong valid value\n", __FUNCTION__);
@@ -817,7 +817,7 @@ int UPDATE_BLOCK_STATE_ENTRY(struct ssdstate *ssd, unsigned int phy_flash_nb, un
 
 	/* Update valid_page_nb */
 	for(i=0;i<PAGE_NB;i++){
-		if(valid_array[i] == 'V'){
+		if(valid_array[i] > 0){
 			valid_count++;
 		}
 	}

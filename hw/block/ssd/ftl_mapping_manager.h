@@ -24,6 +24,7 @@ void INIT_MAPPING_TABLE(struct ssdstate *ssd);
 void TERM_MAPPING_TABLE(struct ssdstate *ssd);
 
 int64_t GET_MAPPING_INFO(struct ssdstate *ssd, int64_t lpn);
+int64_t GET_MAPPING_INFO_SECOND(struct ssdstate *ssd, int64_t fp);
 int GET_NEW_PAGE(struct ssdstate *ssd, int user, int mode, int mapping_index, int64_t* ppn);
 
 int UPDATE_OLD_PAGE_MAPPING(struct ssdstate *ssd, int64_t lpn);

@@ -105,6 +105,8 @@ printf("[%s] Start GC, current empty block: %ld\n", __FUNCTION__, total_empty_bl
 	int plane_nb = victim_phy_block_nb % PLANES_PER_FLASH;
 	int mapping_index = plane_nb * FLASH_NB + victim_phy_flash_nb;
 
+	// int channel_num = victim_phy_flash_nb % 
+
 	b_s_entry = GET_BLOCK_STATE_ENTRY(ssd, victim_phy_flash_nb, victim_phy_block_nb);
 	valid_array = b_s_entry->valid_array;
 

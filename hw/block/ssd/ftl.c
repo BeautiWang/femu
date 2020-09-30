@@ -444,7 +444,7 @@ int64_t _FTL_READ(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 
 int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 {
-    struct ssdconf *sc = &(ssd->ssdparams);
+	struct ssdconf *sc = &(ssd->ssdparams);
     int64_t SECTOR_NB = sc->SECTOR_NB;
     int64_t SECTORS_PER_PAGE = sc->SECTORS_PER_PAGE;
     int PLANES_PER_FLASH = sc->PLANES_PER_FLASH;
@@ -455,46 +455,11 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
     int64_t cur_need_to_emulate_tt = 0, max_need_to_emulate_tt = 0;
     int64_t curtime = get_usec();
 
-#if 0
-    if (curtime - last_time >= 1e6) { /* Coperd: every ten second */
-        //printf("%s, %ld, %ld, %ld\n", __func__, pthread_self(), curtime, last_time);
-        last_time = curtime;
-        fprintf(statfp, "%d,%d,%d,%ld,%ld,%d,%d\n", 
-                nb_blocked_reads, 
-                nb_total_reads, 
-                nb_total_writes, 
-                nb_total_rd_sz, 
-                nb_total_wr_sz,
-                mygc_cnt,
-                mycopy_page_nb);
-                //total_empty_block_nb,
-                //get_total_free_pages());
-        fflush(statfp);
-
-        /* Coperd: clear all related counters */
-        nb_blocked_reads = 0;
-        nb_total_reads = 0;
-        nb_total_rd_sz = 0;
-        nb_total_writes = 0;
-        nb_total_wr_sz = 0;
-        mygc_cnt = 0;
-        mycopy_page_nb = 0;
-    }
-#endif
-
     if (ssd->in_warmup_stage == 0) {
         ssd->nb_total_writes++;
         ssd->nb_total_wr_sz += length;
     }
-
-#ifdef FTL_DEBUG
-	printf("[%s] Start\n", __FUNCTION__);
-#endif
-
-#ifdef FTL_GET_WRITE_WORKLOAD
-	fprintf(fp_write_workload,"%d\t%u\n", sector_nb, length);
-#endif
-
+	
 	int io_page_nb;
 
 	if(sector_nb + length > SECTOR_NB){
@@ -504,15 +469,16 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 	else{
 		ssd->io_alloc_overhead = ALLOC_IO_REQUEST(ssd, sector_nb, length, WRITE, &io_page_nb);
 	}
-	// if(sector_nb > 2048)
-	// 	ssd->min_lsn = (sector_nb < ssd->min_lsn) ? sector_nb : ssd->min_lsn;
-	// ssd->max_lsn = ((sector_nb + length) > ssd->max_lsn) ? (sector_nb + length) : ssd->max_lsn;
-	// printf("ssd->min_lsn = %ld   ssd->max_lsn = %ld\n", ssd->min_lsn, ssd->max_lsn);
 
 	int64_t lba = sector_nb;
 	int64_t lpn;
+	int user;
 	int64_t new_ppn;
-	int64_t old_ppn;
+	int64_t new_fp;
+	int64_t old_fp = -1;
+	int64_t old_ppn = -1;
+
+	int64_t *finger_print = ssd->fingerprint;
 
 	unsigned int remain = length;
 	unsigned int left_skip = sector_nb % SECTORS_PER_PAGE;
@@ -534,8 +500,7 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
      */
     blocking_to = 0;
 
-	while(remain > 0){
-
+	while(remain > 0) {
 		if(remain > SECTORS_PER_PAGE - left_skip){
 			right_skip = 0;
 		}
@@ -544,80 +509,68 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 		}
 
 		write_sects = SECTORS_PER_PAGE - left_skip - right_skip;
-
-#ifdef FIRM_IO_BUFFER
-		INCREASE_WB_FTL_POINTER(write_sects);
-#endif
-
-#ifdef WRITE_NOPARAL
-		ret = GET_NEW_PAGE(VICTIM_NOPARAL, empty_block_table_index, &new_ppn);
-#else
-		ret = GET_NEW_PAGE(ssd, VICTIM_OVERALL, EMPTY_TABLE_ENTRY_NB, &new_ppn);
-#endif
-		if(ret == FAIL){
-			printf("ERROR[%s] Get new page fail \n", __FUNCTION__);
-			return FAIL;
-		}
-
 		lpn = lba / (int64_t)SECTORS_PER_PAGE;
-		old_ppn = GET_MAPPING_INFO(ssd, lpn);
 
-		n_io_info = CREATE_NAND_IO_INFO(ssd, write_page_nb, WRITE, io_page_nb, ssd->io_request_seq_nb);
-
-        num_flash = CALC_FLASH(ssd, new_ppn);
-        num_blk = CALC_BLOCK(ssd, new_ppn);
-        num_channel = num_flash % CHANNEL_NB;
-        num_plane = num_flash * PLANES_PER_FLASH + num_blk % PLANES_PER_FLASH;
-        if (GC_MODE == WHOLE_BLOCKING) {
-            slot = 0;
-        } else if (GC_MODE == CHANNEL_BLOCKING) {
-            slot = num_channel;
-        } else if (GC_MODE == CHIP_BLOCKING) {
-            slot = num_plane;
-        }
-        //printf("%d,", slot);
-
-        if (gc_slot[slot] > blocking_to) {
-            blocking_to = gc_slot[slot];
-        }
-
-
-		if((left_skip || right_skip) && (old_ppn != -1)){
-			cur_need_to_emulate_tt = SSD_PAGE_PARTIAL_WRITE(ssd,
-				CALC_FLASH(ssd, old_ppn), CALC_BLOCK(ssd, old_ppn), CALC_PAGE(ssd, old_ppn),
-				CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn), CALC_PAGE(ssd, new_ppn),
-				n_io_info);
-		}
-		else{
-			cur_need_to_emulate_tt = SSD_PAGE_WRITE(ssd, CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn), CALC_PAGE(ssd, new_ppn), n_io_info);
-		}
-
-        if (cur_need_to_emulate_tt > max_need_to_emulate_tt) {
-            max_need_to_emulate_tt = cur_need_to_emulate_tt;
-        }
+		user = CAL_USER_BY_LPN(ssd, lpn);
+#ifdef DEBUG
+		assert(user>=0 && user < ssd->user_num);
+#endif //DEBUG
 		
-		write_page_nb++;
+		old_fp = GET_MAPPING_INFO(ssd, lpn);
+		new_fp = FP_GENERATOR(ssd, lpn);
+		if (old_fp != -1) {
+			UPDATE_OLD_PAGE_MAPPING(ssd, lpn);
+		}
+		if (finger_print[new_fp] != -1) {
+			//不需要写操作
+		}
+		else {
+			ret = GET_NEW_PAGE(ssd, user, VICTIM_OVERALL, EMPTY_TABLE_ENTRY_NB, &new_ppn);
+			if(ret == FAIL){
+				printf("ERROR[%s] Get new page fail \n", __FUNCTION__);
+				return FAIL;
+			}
+			n_io_info = CREATE_NAND_IO_INFO(ssd, write_page_nb, WRITE, io_page_nb, ssd->io_request_seq_nb);
 
-        //printf("FTL-WRITE: lpn -> ppn: %"PRId64" -> %"PRId64"\n", lpn, new_ppn);
+			num_flash = CALC_FLASH(ssd, new_ppn);
+			num_blk = CALC_BLOCK(ssd, new_ppn);
+			num_channel = num_flash % CHANNEL_NB;
+			num_plane = num_flash * PLANES_PER_FLASH + num_blk % PLANES_PER_FLASH;
 
-		UPDATE_OLD_PAGE_MAPPING(ssd, lpn);
-		UPDATE_NEW_PAGE_MAPPING(ssd, lpn, new_ppn);
+			if (GC_MODE == WHOLE_BLOCKING) {
+				slot = 0;
+			} else if (GC_MODE == CHANNEL_BLOCKING) {
+				slot = num_channel;
+			} else if (GC_MODE == CHIP_BLOCKING) {
+				slot = num_plane;
+			}
 
-#ifdef FTL_DEBUG
-                if(ret == SUCCESS){
-                        printf("\twrite complete [%d, %d, %d]\n",CALC_FLASH(new_ppn), CALC_BLOCK(new_ppn),CALC_PAGE(new_ppn));
-                }
-                else if(ret == FAIL){
-                        printf("ERROR[%s] %d page write fail \n",__FUNCTION__, new_ppn);
-                }
-#endif
+			if (gc_slot[slot] > blocking_to) {
+				blocking_to = gc_slot[slot];
+			}
+
+			if((left_skip || right_skip) && (old_ppn != -1)){
+				cur_need_to_emulate_tt = SSD_PAGE_PARTIAL_WRITE(ssd,
+					CALC_FLASH(ssd, old_ppn), CALC_BLOCK(ssd, old_ppn), CALC_PAGE(ssd, old_ppn),
+					CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn), CALC_PAGE(ssd, new_ppn),
+					n_io_info);
+			}
+			else{
+				cur_need_to_emulate_tt = SSD_PAGE_WRITE(ssd, CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn), CALC_PAGE(ssd, new_ppn), n_io_info);
+			}
+
+			if (cur_need_to_emulate_tt > max_need_to_emulate_tt) {
+				max_need_to_emulate_tt = cur_need_to_emulate_tt;
+			}
+			write_page_nb++;
+		}
+		UPDATE_NEW_PAGE_MAPPING(ssd, lpn, new_fp, new_ppn);
 		lba += write_sects;
 		remain -= write_sects;
 		left_skip = 0;
-
 	}
 
-    if (blocking_to > curtime) {
+	if (blocking_to > curtime) {
         ssd->nb_blocked_writes++;
         //printf("%s,%.2f,%ld,%ld\n", ssd->ssdname, ssd->nb_blocked_writes*100.0/ssd->nb_total_writes, ssd->nb_blocked_writes, ssd->nb_total_writes);
     }
@@ -627,21 +580,6 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 	GC_CHECK(ssd, CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn));
 #endif
 
-#ifdef FIRM_IO_BUFFER
-	INCREASE_WB_LIMIT_POINTER();
-#endif
-
-#ifdef MONITOR_ON
-	char szTemp[1024];
-	sprintf(szTemp, "WRITE PAGE %d ", length);
-	WRITE_LOG(szTemp);
-	sprintf(szTemp, "WB CORRECT %d", write_page_nb);
-	WRITE_LOG(szTemp);
-#endif
-
-#ifdef FTL_DEBUG
-	printf("[%s] End\n", __FUNCTION__);
-#endif
 	return max_need_to_emulate_tt; 
 }
 
@@ -712,6 +650,8 @@ int femu_discard_process(struct ssdstate *ssd, uint32_t length, int64_t sector_n
 
 void myPanic(const char func[], const char msg[]) {
     printf("Error[%s], %s\n", func, msg);
+	getchar();
+	return;
 }
 
 int32_t sum(const int array[]) {
@@ -735,7 +675,7 @@ bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd) {
     }
     return true;
 }
-#ifndef //DEBUG
+#endif //DEBUG
 
 void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
 #ifdef DEBUG
@@ -777,7 +717,7 @@ int CAL_USER_BY_CHANNEL(struct ssdstate *ssd, int channel) {
 	 struct USER_INFO *user_head = ssd->user;
 	 int user_num = ssd->user_num;
 	 
-	 for (int i = 0; i < user; ++i) {
+	 for (int i = 0; i < user_num; ++i) {
 		 if (channel >= user_head->started_channel 
 		 	&& channel <= user_head->ended_channel) {
 				 res = i;
@@ -787,6 +727,23 @@ int CAL_USER_BY_CHANNEL(struct ssdstate *ssd, int channel) {
 	 }
 	 if(res == -1) myPanic(__FUNCTION__, "Cannot find the user");
 	 return res;
+}
+
+int CAL_USER_BY_LPN(struct ssdstate *ssd, int64_t lpn) {
+	int res = -1;
+	int user_num = ssd->user_num;
+	struct USER_INFO *user_head = ssd->user;
+
+	for (int i = 0; i < user_num; ++i) {
+		if (lpn >= user_head->minLPN && lpn <= user_head->maxLPN) {
+			res = i;
+			break;
+		}
+		user_head ++;
+	}
+
+	if(res == -1) myPanic(__FUNCTION__, "Cannot find the user");
+	return res;
 }
 
 #ifdef DEBUG
@@ -832,4 +789,29 @@ void INIT_zipf_AND_fingerprint(struct ssdstate *ssd)
 	{
 		ssd->Pzipf[i]=ssd->Pzipf[i-1]+1/pow((double)i, a)/sum;
 	}
+}
+
+int64_t FP_GENERATOR(struct ssdstate *ssd, int64_t lpn){
+	int64_t fp = -1;
+
+	double data = ((double)rand() + 1) / ((double)RAND_MAX + 2);
+	int64_t low = 0, high = UNIQUE_PAGE_NB, mid;
+	while (low < high) {
+		mid = low + (high - low + 1) / 2;
+
+		if (data <= ssd->Pzipf[mid]) {
+			if (data > ssd->Pzipf[mid - 1]) {
+				fp = mid;
+				break;
+			}
+			high = mid - 1;
+		}
+		else {
+			low = mid;
+		}
+	}
+
+	if (fp == -1) myPanic(__FUNCTION__, "fp == -1?");
+
+	return fp;
 }

@@ -61,6 +61,13 @@ int64_t GET_MAPPING_INFO(struct ssdstate *ssd, int64_t lpn)
 	return ppn;
 }
 
+int64_t GET_MAPPING_INFO_SECOND(struct ssdstate *ssd, int64_t fp) {
+	int64_t *mapping_table_sec = ssd->fingerprint;
+	int ppn = mapping_table_sec[fp];
+
+	return ppn;
+}
+
 int GET_NEW_PAGE(struct ssdstate *ssd, int user, int mode, int mapping_index, int64_t* ppn)
 {
     struct ssdconf *sc = &(ssd->ssdparams);
@@ -95,24 +102,28 @@ int GET_NEW_PAGE(struct ssdstate *ssd, int user, int mode, int mapping_index, in
 
 int UPDATE_OLD_PAGE_MAPPING(struct ssdstate *ssd, int64_t lpn)
 {
+	int64_t old_fp;
 	int64_t old_ppn;
+	int64_t *finger_print = ssd->fingerprint;
 
 #ifdef FTL_MAP_CACHE
 	old_ppn = CACHE_GET_PPN(lpn);
 #else
-	old_ppn = GET_MAPPING_INFO(ssd, lpn);
+	old_fp = GET_MAPPING_INFO(ssd, lpn);
+#ifdef DEBUG
+	assert(old_fp != -1);
+#endif //DEBUG
+	old_ppn = GET_MAPPING_INFO_SECOND(ssd, old_fp);
 #endif
-
-	if(old_ppn == -1){
-#ifdef FTL_DEBUG
-		printf("[%s] New page \n", __FUNCTION__);
-#endif
-		return SUCCESS;
-	}
-	else{
-		UPDATE_BLOCK_STATE_ENTRY(ssd, CALC_FLASH(ssd, old_ppn), CALC_BLOCK(ssd, old_ppn), CALC_PAGE(ssd, old_ppn), INVALID);
+	UPDATE_BLOCK_STATE_ENTRY(ssd, CALC_FLASH(ssd, old_ppn), CALC_BLOCK(ssd, old_ppn), CALC_PAGE(ssd, old_ppn), INVALID);
+	
+	block_state_entry* b_s_entry = GET_BLOCK_STATE_ENTRY(ssd, CALC_FLASH(ssd, old_ppn), CALC_BLOCK(ssd, old_ppn));
+	int* valid_array = b_s_entry->valid_array;
+	if (valid_array[old_ppn] == 0) {
 		UPDATE_INVERSE_MAPPING(ssd, old_ppn, -1);
+		finger_print[old_fp] = -1;
 	}
+		
 
 	return SUCCESS;
 }
