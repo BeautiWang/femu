@@ -128,21 +128,23 @@ int UPDATE_OLD_PAGE_MAPPING(struct ssdstate *ssd, int64_t lpn)
 	return SUCCESS;
 }
 
-int UPDATE_NEW_PAGE_MAPPING(struct ssdstate *ssd, int64_t lpn, int64_t ppn)
+int UPDATE_NEW_PAGE_MAPPING(struct ssdstate *ssd, int64_t lpn, int64_t fp, int64_t ppn)
 {
     int64_t *mapping_table = ssd->mapping_table;
+	int64_t *fingerprint = ssd->fingerprint;
 
 	/* Update Page Mapping Table */
 #ifdef FTL_MAP_CACHE
 	CACHE_UPDATE_PPN(lpn, ppn);
 #else
-	mapping_table[lpn] = ppn;
+	mapping_table[lpn] = fp;
+	fingerprint[fp] = ppn;
 #endif
 
 	/* Update Inverse Page Mapping Table */
 	UPDATE_BLOCK_STATE_ENTRY(ssd, CALC_FLASH(ssd, ppn), CALC_BLOCK(ssd, ppn), CALC_PAGE(ssd, ppn), VALID);
 	UPDATE_BLOCK_STATE(ssd, CALC_FLASH(ssd, ppn), CALC_BLOCK(ssd, ppn), DATA_BLOCK);
-	UPDATE_INVERSE_MAPPING(ssd, ppn, lpn);
+	UPDATE_INVERSE_MAPPING(ssd, ppn, fp);
 
 	return SUCCESS;
 }

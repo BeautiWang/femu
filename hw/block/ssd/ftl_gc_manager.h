@@ -14,9 +14,9 @@
 
 struct ssdstate;
 
-void GC_CHECK(struct ssdstate *ssd, unsigned int phy_flash_nb, unsigned int phy_block_nb);
+void GC_CHECK(struct ssdstate *ssd, int user, unsigned int phy_flash_nb, unsigned int phy_block_nb);
 
-int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip);
-int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_nb, unsigned int* phy_block_nb);
+int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip, int user);
+int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_nb, unsigned int* phy_block_nb, int user);
 
 #endif

@@ -271,6 +271,7 @@ int64_t _FTL_READ(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 	}
 
 	int64_t lpn;
+	int64_t fp;
 	int64_t ppn;
 	int64_t lba = sector_nb;
 	unsigned int remain = length;
@@ -292,7 +293,7 @@ int64_t _FTL_READ(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 #endif
 
 	while(remain > 0){
-
+		ppn = -1;
 		if(remain > SECTORS_PER_PAGE - left_skip){
 			right_skip = 0;
 		}
@@ -302,7 +303,14 @@ int64_t _FTL_READ(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 		read_sects = SECTORS_PER_PAGE - left_skip - right_skip;
 
 		lpn = lba / (int64_t)SECTORS_PER_PAGE;
-		ppn = GET_MAPPING_INFO(ssd, lpn);
+		fp = GET_MAPPING_INFO(ssd, lpn);
+		if (fp == -1) {
+			printf("fp[%lld] not mapped!!!\n", fp);
+		}
+		else {
+			ppn = GET_MAPPING_INFO_SECOND(ssd, fp);
+		}
+		
 
 		if(ppn == -1){
 #ifdef FIRM_IO_BUFFER
@@ -340,8 +348,8 @@ int64_t _FTL_READ(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
     }
 #endif
 
-	while(remain > 0){
-
+	while(remain > 0) {		
+		ppn = -1;
 		if(remain > SECTORS_PER_PAGE - left_skip){
 			right_skip = 0;
 		}
@@ -355,7 +363,14 @@ int64_t _FTL_READ(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 #ifdef FTL_MAP_CACHE
 		ppn = CACHE_GET_PPN(lpn);
 #else
-		ppn = GET_MAPPING_INFO(ssd, lpn);
+		fp = GET_MAPPING_INFO(ssd, lpn);
+		if (fp == -1) {
+			printf("ERROR[%s] No Mapping info\n", __FUNCTION__);
+		}
+		else {
+			ppn = GET_MAPPING_INFO_SECOND(ssd, fp);
+		}
+		
 #endif
 
 		if(ppn == -1){
@@ -366,7 +381,7 @@ int64_t _FTL_READ(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 		}
 
 		/* Read data from NAND page */
-                n_io_info = CREATE_NAND_IO_INFO(ssd, read_page_nb, READ, io_page_nb, ssd->io_request_seq_nb);
+        n_io_info = CREATE_NAND_IO_INFO(ssd, read_page_nb, READ, io_page_nb, ssd->io_request_seq_nb);
 
 
         num_flash = CALC_FLASH(ssd, ppn);
@@ -518,11 +533,12 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 		
 		old_fp = GET_MAPPING_INFO(ssd, lpn);
 		new_fp = FP_GENERATOR(ssd, lpn);
-		if (old_fp != -1) {
+		if (old_fp != -1) {	//之前已经存在映射，所以需要将旧映射取消
 			UPDATE_OLD_PAGE_MAPPING(ssd, lpn);
 		}
 		if (finger_print[new_fp] != -1) {
 			//不需要写操作
+			UPDATE_NEW_PAGE_MAPPING(ssd, lpn, new_fp, finger_print[new_fp]);
 		}
 		else {
 			ret = GET_NEW_PAGE(ssd, user, VICTIM_OVERALL, EMPTY_TABLE_ENTRY_NB, &new_ppn);
@@ -562,9 +578,12 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 			if (cur_need_to_emulate_tt > max_need_to_emulate_tt) {
 				max_need_to_emulate_tt = cur_need_to_emulate_tt;
 			}
+
+			UPDATE_NEW_PAGE_MAPPING(ssd, lpn, new_fp, new_ppn);
+			
 			write_page_nb++;
 		}
-		UPDATE_NEW_PAGE_MAPPING(ssd, lpn, new_fp, new_ppn);
+		
 		lba += write_sects;
 		remain -= write_sects;
 		left_skip = 0;
@@ -577,13 +596,14 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 
 	INCREASE_IO_REQUEST_SEQ_NB(ssd);
 #ifdef GC_ON
-	GC_CHECK(ssd, CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn));
+	GC_CHECK(ssd, user, CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn));
 #endif
 
 	return max_need_to_emulate_tt; 
 }
 
 int femu_discard_process(struct ssdstate *ssd, uint32_t length, int64_t sector_nb) {
+#if 0
 	struct ssdconf *sc = &(ssd->ssdparams);
     int64_t SECTOR_NB = sc->SECTOR_NB;
     int64_t SECTORS_PER_PAGE = sc->SECTORS_PER_PAGE;
@@ -596,6 +616,7 @@ int femu_discard_process(struct ssdstate *ssd, uint32_t length, int64_t sector_n
 
 	int64_t lba = sector_nb;
 	int64_t lpn;
+	int64_t old_fp;
 	int64_t old_ppn;
 
 	unsigned int remain = length;
@@ -627,7 +648,9 @@ int femu_discard_process(struct ssdstate *ssd, uint32_t length, int64_t sector_n
 
 		//printf("hao_debug:_FTL_WRITEbbbbbbbbbbbbbbbbbbbbbb %d\n", bloom_temp);
 		lpn = lba / (int64_t)SECTORS_PER_PAGE;
-		old_ppn = GET_MAPPING_INFO(ssd, lpn);
+		old_fp = GET_MAPPING_INFO(ssd, lpn);
+		assert(old_fp != -1);
+		old_ppn = GET_MAPPING_INFO_SECOND(ssd, old_fp);
 		//printf("hao_debug:_FTL_WRITE lpn old_ppn %d %d\n",lpn, old_ppn);
 
 		if((left_skip || right_skip) && (old_ppn != -1)){
@@ -644,7 +667,7 @@ int femu_discard_process(struct ssdstate *ssd, uint32_t length, int64_t sector_n
 		remain -= write_sects;
 		left_skip = 0;
 	}
-
+#endif
 	return true;
 }
 
@@ -705,7 +728,9 @@ void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
         user_head->minLPN = started_channel * page_per_channel;
         user_head->maxLPN = (user_head->ended_channel + 1) * page_per_channel - 1;
 
-        user_head->free_block_num = sc->BLOCK_NB * (sc->FLASH_NB / sc->CHANNEL_NB) * user_channel[i];
+		user_head->TOTAL_EMPTY_BLOCK_NB = sc->BLOCK_NB * (sc->FLASH_NB / sc->CHANNEL_NB) * user_channel[i];
+		user_head->GC_THRESHOLD_BLOCK_NB = (int)((1-sc->GC_THRESHOLD) * (double)user_head->TOTAL_EMPTY_BLOCK_NB);
+        user_head->free_block_num = user_head->TOTAL_EMPTY_BLOCK_NB;
         user_head->free_page_num = page_per_channel * user_channel[i];
 		started_channel += user_channel[i];
         user_head ++;

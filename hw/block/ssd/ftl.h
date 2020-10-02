@@ -39,7 +39,13 @@ struct USER_INFO {
     int64_t minLPN;
     int64_t maxLPN;
 
-    int32_t gc_count;
+
+    /* Garbage Collection */
+    int gc_count;
+    int TOTAL_EMPTY_BLOCK_NB;
+    int GC_THRESHOLD_BLOCK_NB;
+    
+    
     /* Physical resources */
     int32_t free_block_num;
     int32_t used_block_num;

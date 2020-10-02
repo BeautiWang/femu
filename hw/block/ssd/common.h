@@ -156,8 +156,8 @@
 #define VICTIM_NOPARAL	43
 
 /* Page Type */
-#define VALID		50
-#define INVALID		51
+#define VALID		500000
+#define INVALID		500001
 
 /* Caller Type for Hybrid FTL */
 #if defined FAST_FTL || defined LAST_FTL

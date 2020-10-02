@@ -15,7 +15,7 @@
 //extern double ssd_util;
 //extern int64_t time_gc, time_svb, time_cp, time_up;
 
-void GC_CHECK(struct ssdstate *ssd, unsigned int phy_flash_nb, unsigned int phy_block_nb)
+void GC_CHECK(struct ssdstate *ssd, int user, unsigned int phy_flash_nb, unsigned int phy_block_nb)
 {
     struct ssdconf *sc = &(ssd->ssdparams);
     int FLASH_NB = sc->FLASH_NB;
@@ -32,8 +32,9 @@ void GC_CHECK(struct ssdstate *ssd, unsigned int phy_flash_nb, unsigned int phy_
 	if(ssd->total_empty_block_nb < sc->GC_THRESHOLD_BLOCK_NB)
 	/*if(total_empty_block_nb <= FLASH_NB * PLANES_PER_FLASH)*/
 	{
+		assert(GC_VICTIM_NB == 1);
 		for(i=0; i<GC_VICTIM_NB; i++){
-			ret = GARBAGE_COLLECTION(ssd, -1);
+			ret = GARBAGE_COLLECTION(ssd, -1, user);
 			if(ret == FAIL){
 				break;
 			}
@@ -54,7 +55,7 @@ void GC_CHECK(struct ssdstate *ssd, unsigned int phy_flash_nb, unsigned int phy_
 }
 
 
-int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip)
+int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip, int user)
 {
     struct ssdconf *sc = &(ssd->ssdparams);
     int FLASH_NB = sc->FLASH_NB;
@@ -73,14 +74,18 @@ int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip)
 
     int64_t gc_start = get_ts_in_ns();
 
-#ifdef FTL_DEBUG
-printf("[%s] Start GC, current empty block: %ld\n", __FUNCTION__, total_empty_block_nb);
-#endif
 	int i;
 	int ret;
 	int64_t lpn;
+	int64_t fp;
 	int64_t old_ppn;
 	int64_t new_ppn;
+	
+	struct USER_INFO *user_head = ssd->user;
+	user_head += user;
+
+	int64_t *mapping_table = ssd->mapping_table;
+	int64_t *fingerprint = ssd->fingerprint;
 
 	unsigned int victim_phy_flash_nb = FLASH_NB;
 	unsigned int victim_phy_block_nb = 0;
@@ -92,7 +97,7 @@ printf("[%s] Start GC, current empty block: %ld\n", __FUNCTION__, total_empty_bl
 	block_state_entry* b_s_entry;
 
     int64_t svb_start = get_ts_in_ns();
-	ret = SELECT_VICTIM_BLOCK(ssd, chip, &victim_phy_flash_nb, &victim_phy_block_nb);
+	ret = SELECT_VICTIM_BLOCK(ssd, chip, &victim_phy_flash_nb, &victim_phy_block_nb, user);
     ssd->time_svb += get_ts_in_ns() - svb_start;
 
 	if(ret == FAIL){
@@ -105,42 +110,21 @@ printf("[%s] Start GC, current empty block: %ld\n", __FUNCTION__, total_empty_bl
 	int plane_nb = victim_phy_block_nb % PLANES_PER_FLASH;
 	int mapping_index = plane_nb * FLASH_NB + victim_phy_flash_nb;
 
-	// int channel_num = victim_phy_flash_nb % 
-
 	b_s_entry = GET_BLOCK_STATE_ENTRY(ssd, victim_phy_flash_nb, victim_phy_block_nb);
 	valid_array = b_s_entry->valid_array;
 
-    int64_t cp_start = get_ts_in_ns();
+	int64_t cp_start = get_ts_in_ns();
 
-    /* Coperd: we only need one emtpy block */
-#if 0
-    empty_block_entry *gc_empty_block = GET_EMPTY_BLOCK(ssd, VICTIM_OVERALL, EMPTY_TABLE_ENTRY_NB);
-	int64_t new_ppn_base = gc_empty_block->phy_flash_nb*BLOCK_NB*PAGE_NB \
-	       + gc_empty_block->phy_block_nb*PAGE_NB \
-	       + gc_empty_block->curr_phy_page_nb;
+	int64_t victim_block_base_ppn = victim_phy_flash_nb * PAGES_PER_FLASH + victim_phy_block_nb*PAGE_NB;
 
-	gc_empty_block->curr_phy_page_nb += 1;
-#endif
-
-    int64_t victim_block_base_ppn = victim_phy_flash_nb*PAGES_PER_FLASH + victim_phy_block_nb*PAGE_NB;
-
-	for(i=0;i<PAGE_NB;i++){
-		if(valid_array[i]=='V'){
-#ifdef GC_VICTIM_OVERALL
-			ret = GET_NEW_PAGE(ssd, VICTIM_OVERALL, EMPTY_TABLE_ENTRY_NB, &new_ppn);
-            //new_ppn = new_ppn_base;
-            //new_ppn_base++;
-#else
-			ret = GET_NEW_PAGE(ssd, VICTIM_INCHIP, mapping_index, &new_ppn);
-            //new_ppn = new_ppn_base;
-            //new_ppn_base++;
-#endif
+	for (int i = 0; i < PAGE_NB; i++) {
+		if (valid_array[i] > 0) {
+			ret = GET_NEW_PAGE(ssd, user, VICTIM_OVERALL, EMPTY_TABLE_ENTRY_NB, &new_ppn);
 			if(ret == FAIL){
 				printf("ERROR[%s] Get new page fail\n", __FUNCTION__);
 				return FAIL;
 			}
 
-		
 			/* Read a Valid Page from the Victim NAND Block */
 			n_io_info = CREATE_NAND_IO_INFO(ssd, i, GC_READ, -1, ssd->io_request_seq_nb);
 			SSD_PAGE_READ(ssd, victim_phy_flash_nb, victim_phy_block_nb, i, n_io_info);
@@ -156,38 +140,41 @@ printf("[%s] Start GC, current empty block: %ld\n", __FUNCTION__, total_empty_bl
 #ifdef FTL_MAP_CACHE
 			lpn = CACHE_GET_LPN(ssd, old_ppn);
 #else
-			lpn = GET_INVERSE_MAPPING_INFO(ssd, old_ppn);
+			fp = GET_INVERSE_MAPPING_INFO(ssd, old_ppn);
 #endif
-			UPDATE_NEW_PAGE_MAPPING(ssd, lpn, new_ppn);
+			
+			fingerprint[fp] = new_ppn;
+
+			UPDATE_BLOCK_STATE_ENTRY(ssd, CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn), CALC_PAGE(ssd, new_ppn), valid_array[i]);
+			UPDATE_BLOCK_STATE(ssd, CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn), DATA_BLOCK);
+			UPDATE_INVERSE_MAPPING(ssd, new_ppn, fp);
 
 			copy_page_nb++;
 		}
 	}
-    ssd->time_cp += get_ts_in_ns() - cp_start;
+	ssd->time_cp += get_ts_in_ns() - cp_start;
 
 	if(copy_page_nb != b_s_entry->valid_page_nb){
 		printf("ERROR[%s] The number of valid page is not correct\n", __FUNCTION__);
 		return FAIL;
 	}
 
-#ifdef FTL_DEBUG
-	printf("[%s] [f: %d, b: %d] Copy Page : %d, total victim : %ld, total empty : %ld \n",__FUNCTION__, victim_phy_flash_nb, victim_phy_block_nb,  copy_page_nb, total_victim_block_nb, total_empty_block_nb);
-#endif
-    /* Coperd: keep track of #copy-pages of last GC */
+	/* Coperd: keep track of #copy-pages of last GC */
     ssd->mycopy_page_nb += copy_page_nb; 
 
     int64_t up_start = get_ts_in_ns();
 	SSD_BLOCK_ERASE(ssd, victim_phy_flash_nb, victim_phy_block_nb);
 	UPDATE_BLOCK_STATE(ssd, victim_phy_flash_nb, victim_phy_block_nb, EMPTY_BLOCK);
 	INSERT_EMPTY_BLOCK(ssd, victim_phy_flash_nb, victim_phy_block_nb);
-    ssd->time_up += get_ts_in_ns() - up_start;
+	ssd->time_up += get_ts_in_ns() - up_start;
 
 	ssd->gc_count++;
 
     /* Coperd: keep trace of #gc of last time */
     ssd->mygc_cnt += 1; 
-
-    int64_t gc_time = BLOCK_ERASE_DELAY + copy_page_nb * 920 + 64 * 920;
+	user_head->gc_count ++;
+	
+	int64_t gc_time = BLOCK_ERASE_DELAY + copy_page_nb * 920 + 64 * 920;
     int slot = 0;
     if (GC_MODE == WHOLE_BLOCKING) {
         slot = 0;
@@ -244,13 +231,23 @@ printf("[%s] Start GC, current empty block: %ld\n", __FUNCTION__, total_empty_bl
 }
 
 /* Greedy Garbage Collection Algorithm */
-int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_nb, unsigned int* phy_block_nb)
+int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_nb, unsigned int* phy_block_nb, int user)
 {
     struct ssdconf *sc = &(ssd->ssdparams);
     int FLASH_NB = sc->FLASH_NB;
     int BLOCK_NB = sc->BLOCK_NB;
     int PAGE_NB = sc->PAGE_NB;
     int VICTIM_TABLE_ENTRY_NB = sc->VICTIM_TABLE_ENTRY_NB;
+
+	struct USER_INFO *user_head = ssd->user;
+	user_head += user;
+
+	int FLASH_PER_CHANNEL = sc->FLASH_NB / sc->CHANNEL_NB;
+	int PLANE_PER_CHANNEL = FLASH_PER_CHANNEL * sc->PLANES_PER_FLASH;
+	int min_channel = user_head->started_channel;
+	int max_channel = user_head->ended_channel;
+	int min_plane = min_channel * PLANE_PER_CHANNEL;
+	int max_plane = (max_channel + 1) * PLANE_PER_CHANNEL - 1;
 
     void *victim_block_list = ssd->victim_block_list;
 
@@ -272,8 +269,9 @@ int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_
 	/* if GC_TRIGGER_OVERALL is defined, then */
 #ifdef GC_TRIGGER_OVERALL
 	curr_v_b_root = (victim_block_root*)victim_block_list;
+	curr_v_b_root += min_plane;
 
-	for(i=0;i<VICTIM_TABLE_ENTRY_NB;i++){
+	for(i=min_plane;i<=max_plane;i++){
 
 		if(curr_v_b_root->victim_block_nb != 0){
 

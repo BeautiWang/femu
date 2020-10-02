@@ -812,7 +812,8 @@ int UPDATE_BLOCK_STATE_ENTRY(struct ssdstate *ssd, unsigned int phy_flash_nb, un
 		valid_array[phy_page_nb] = -1;
 	}
 	else{
-		printf("ERROR[%s] Wrong valid value\n", __FUNCTION__);
+		valid_array[phy_page_nb] = valid;
+		//printf("ERROR[%s] Wrong valid value\n", __FUNCTION__);
 	}
 
 	/* Update valid_page_nb */

@@ -28,7 +28,7 @@ int64_t GET_MAPPING_INFO_SECOND(struct ssdstate *ssd, int64_t fp);
 int GET_NEW_PAGE(struct ssdstate *ssd, int user, int mode, int mapping_index, int64_t* ppn);
 
 int UPDATE_OLD_PAGE_MAPPING(struct ssdstate *ssd, int64_t lpn);
-int UPDATE_NEW_PAGE_MAPPING(struct ssdstate *ssd, int64_t lpn, int64_t ppn);
+int UPDATE_NEW_PAGE_MAPPING(struct ssdstate *ssd, int64_t lpn,  int64_t fp, int64_t ppn);
 
 unsigned int CALC_FLASH(struct ssdstate *ssd, int64_t ppn);
 unsigned int CALC_BLOCK(struct ssdstate *ssd, int64_t ppn);
