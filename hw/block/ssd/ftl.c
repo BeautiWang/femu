@@ -723,10 +723,10 @@ void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
     for (int i = 0; i < USER_NUM; ++i) {
         user_head->channel_num = user_channel[i];
         user_head->started_channel = started_channel;
-        user_head->ended_channel = started_channel + user_head->channel_num - 1;
+        user_head->ended_channel = started_channel + user_head->channel_num;
 		user_head->next_write_channel = started_channel;
         user_head->minLPN = started_channel * page_per_channel;
-        user_head->maxLPN = (user_head->ended_channel + 1) * page_per_channel - 1;
+        user_head->maxLPN = user_head->ended_channel * page_per_channel;
 
 		user_head->TOTAL_EMPTY_BLOCK_NB = sc->BLOCK_NB * (sc->FLASH_NB / sc->CHANNEL_NB) * user_channel[i];
 		user_head->GC_THRESHOLD_BLOCK_NB = (int)((1-sc->GC_THRESHOLD) * (double)user_head->TOTAL_EMPTY_BLOCK_NB);
@@ -744,7 +744,7 @@ int CAL_USER_BY_CHANNEL(struct ssdstate *ssd, int channel) {
 	 
 	 for (int i = 0; i < user_num; ++i) {
 		 if (channel >= user_head->started_channel 
-		 	&& channel <= user_head->ended_channel) {
+		 	&& channel < user_head->ended_channel) {
 				 res = i;
 				 break;
 		 }
@@ -760,7 +760,7 @@ int CAL_USER_BY_LPN(struct ssdstate *ssd, int64_t lpn) {
 	struct USER_INFO *user_head = ssd->user;
 
 	for (int i = 0; i < user_num; ++i) {
-		if (lpn >= user_head->minLPN && lpn <= user_head->maxLPN) {
+		if (lpn >= user_head->minLPN && lpn < user_head->maxLPN) {
 			res = i;
 			break;
 		}
@@ -786,6 +786,51 @@ void PRINT_USER_CONFIG(struct ssdstate *ssd){
 		printf("********************************\n");
 		user_head ++;
 	}
+	return;
+}
+
+void PRINT_USER_PLANE_STAT(struct ssdstate *ssd, int user) {
+	struct ssdconf *sc = &(ssd->ssdparams);
+	int FLASH_PER_CHANNEL = sc->FLASH_NB / sc->CHANNEL_NB;
+	int PLANE_PER_CHANNEL = FLASH_PER_CHANNEL * sc->PLANES_PER_FLASH;
+	
+	struct USER_INFO *user_head = &(ssd->user[user]);
+	int MIN_PLANE_NUM = user_head->started_channel * PLANE_PER_CHANNEL;
+	int MAX_PLANE_NUM = user_head->ended_channel * PLANE_PER_CHANNEL;
+
+	empty_block_root *empty_block_lists = (empty_block_root *)ssd->empty_block_list, *tmp1 = NULL;
+	victim_block_root *victim_block_lists = (victim_block_root *)ssd->victim_block_list, *tmp2 = NULL;
+
+	for (int i = MIN_PLANE_NUM; i < MAX_PLANE_NUM; ++i) {
+		tmp1 = empty_block_lists + i;
+		tmp2 = victim_block_lists + i;
+		printf("plane %d: empty = %d, victim = %d\n", i, tmp1->empty_block_nb, tmp2->victim_block_nb);
+	}
+
+	return;
+}
+
+void PRINT_USER_STAT(struct ssdstate *ssd) {
+	struct ssdconf *sc = &(ssd->ssdparams);
+	int USER_NB = ssd->user_num;
+	printf("---------------------------------------------\n");
+	for (int i = 0; i < USER_NB; ++i) {
+		struct USER_INFO *user_head = ssd->user + i;
+		printf("user[%d], empty = %d, victim = %d\n", i,  user_head->free_block_num, user_head->used_block_num);
+	}
+	printf("---------------------------------------------\n");
+	return;
+}
+
+void PRINT_PLANE_STAT(struct ssdstate *ssd) {
+	struct ssdconf *sc = &(ssd->ssdparams);
+	int USER_NB = ssd->user_num;
+	printf("---------------------------------------------\n");
+	for (int i = 0; i < USER_NB; i++)
+	{
+		PRINT_USER_PLANE_STAT(ssd, i);
+	}
+	printf("---------------------------------------------\n");
 	return;
 }
 

@@ -425,15 +425,15 @@ empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int user, int mode, int
 
 	struct USER_INFO *user_head = &(ssd->user[user]);
 
-    while(ssd->total_empty_block_nb != 0){
+    // while(ssd->total_empty_block_nb != 0){
+	while(user_head->free_block_num != 0) {
 
         if(mode == VICTIM_OVERALL){
             curr_root_entry = (empty_block_root*)empty_block_list + user_head->next_write_channel;
 
             if(curr_root_entry->empty_block_nb == 0){
                 user_head->next_write_channel ++;
-				if (user_head->next_write_channel > user_head->ended_channel) {
-					assert(user_head->next_write_channel == user_head->ended_channel + 1);
+				if (user_head->next_write_channel == user_head->ended_channel) {
 					user_head->next_write_channel = user_head->started_channel;
 				}
                 continue;
@@ -463,18 +463,18 @@ empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int user, int mode, int
 					user_head->used_block_num++;
 
                     user_head->next_write_channel ++;
-					if (user_head->next_write_channel > user_head->ended_channel) {
-						assert(user_head->next_write_channel == user_head->ended_channel + 1);
+					if (user_head->next_write_channel == user_head->ended_channel) {
 						user_head->next_write_channel = user_head->started_channel;
 					}
                     continue;
                 }
                 user_head->next_write_channel ++;
-				if (user_head->next_write_channel > user_head->ended_channel) {
-					assert(user_head->next_write_channel == user_head->ended_channel + 1);
+				if (user_head->next_write_channel == user_head->ended_channel) {
 					user_head->next_write_channel = user_head->started_channel;
 				}
-                return curr_empty_block;
+				//PRINT_PLANE_STAT(ssd);
+                PRINT_USER_STAT(ssd);
+				return curr_empty_block;
             }
         }
         else if(mode == VICTIM_INCHIP){

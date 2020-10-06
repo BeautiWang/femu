@@ -149,7 +149,13 @@ int64_t FP_GENERATOR(struct ssdstate *ssd, int64_t lpn);
 #define DEBUG
 #ifdef DEBUG
 void PRINT_USER_CONFIG(struct ssdstate *ssd);
+void PRINT_USER_PLANE_STAT(struct ssdstate *ssd, int user);
+void PRINT_USER_STAT(struct ssdstate *ssd);
+
+void PRINT_PLANE_STAT(struct ssdstate *ssd);
+
 bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd); /* Check if the configuration is legal */
+
 #endif //DEBUG
 
 #endif
