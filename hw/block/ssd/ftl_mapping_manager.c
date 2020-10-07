@@ -114,16 +114,20 @@ int UPDATE_OLD_PAGE_MAPPING(struct ssdstate *ssd, int64_t lpn)
 	assert(old_fp != -1);
 #endif //DEBUG
 	old_ppn = GET_MAPPING_INFO_SECOND(ssd, old_fp);
+
+	if(old_ppn == -1) {
+		myPanic(__FUNCTION__, "old_ppn == -1?");
+	}
+
 #endif
 	UPDATE_BLOCK_STATE_ENTRY(ssd, CALC_FLASH(ssd, old_ppn), CALC_BLOCK(ssd, old_ppn), CALC_PAGE(ssd, old_ppn), INVALID);
 	
 	block_state_entry* b_s_entry = GET_BLOCK_STATE_ENTRY(ssd, CALC_FLASH(ssd, old_ppn), CALC_BLOCK(ssd, old_ppn));
 	int* valid_array = b_s_entry->valid_array;
-	if (valid_array[old_ppn] == 0) {
+	if (valid_array[CALC_PAGE(ssd, old_ppn)] == 0) {
 		UPDATE_INVERSE_MAPPING(ssd, old_ppn, -1);
 		finger_print[old_fp] = -1;
 	}
-		
 
 	return SUCCESS;
 }

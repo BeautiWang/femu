@@ -34,11 +34,14 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 struct USER_INFO {
     int32_t channel_num;
     int32_t started_channel;
-    int32_t next_write_channel;
     int32_t ended_channel;
     int64_t minLPN;
     int64_t maxLPN;
 
+    int32_t started_plane;
+    int32_t ended_plane;
+
+    int32_t next_write_plane;
 
     /* Garbage Collection */
     int gc_count;

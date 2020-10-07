@@ -27,9 +27,12 @@ void GC_CHECK(struct ssdstate *ssd, int user, unsigned int phy_flash_nb, unsigne
 	int i, ret;
 	int plane_nb = phy_block_nb % PLANES_PER_FLASH;
 	int mapping_index = plane_nb * FLASH_NB + phy_flash_nb;
+
+	struct USER_INFO *user_head = ssd->user + user;
 	
 #ifdef GC_TRIGGER_OVERALL
-	if(ssd->total_empty_block_nb < sc->GC_THRESHOLD_BLOCK_NB)
+	if (user_head->free_block_num < user_head->GC_THRESHOLD_BLOCK_NB)
+	// if(ssd->total_empty_block_nb < sc->GC_THRESHOLD_BLOCK_NB)
 	/*if(total_empty_block_nb <= FLASH_NB * PLANES_PER_FLASH)*/
 	{
 		assert(GC_VICTIM_NB == 1);
@@ -90,7 +93,7 @@ int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip, int user)
 	unsigned int victim_phy_flash_nb = FLASH_NB;
 	unsigned int victim_phy_block_nb = 0;
 
-	char* valid_array;
+	int* valid_array;
 	int copy_page_nb = 0;
 
 	nand_io_info* n_io_info = NULL;
@@ -155,7 +158,7 @@ int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip, int user)
 	ssd->time_cp += get_ts_in_ns() - cp_start;
 
 	if(copy_page_nb != b_s_entry->valid_page_nb){
-		printf("ERROR[%s] The number of valid page is not correct\n", __FUNCTION__);
+		printf("ERROR[%s] The number of valid page is not correct. %d  %d\n", __FUNCTION__, copy_page_nb, b_s_entry->valid_page_nb);
 		return FAIL;
 	}
 
@@ -166,6 +169,7 @@ int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip, int user)
 	SSD_BLOCK_ERASE(ssd, victim_phy_flash_nb, victim_phy_block_nb);
 	UPDATE_BLOCK_STATE(ssd, victim_phy_flash_nb, victim_phy_block_nb, EMPTY_BLOCK);
 	INSERT_EMPTY_BLOCK(ssd, victim_phy_flash_nb, victim_phy_block_nb);
+	user_head->free_block_num ++;
 	ssd->time_up += get_ts_in_ns() - up_start;
 
 	ssd->gc_count++;
@@ -206,12 +210,12 @@ int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip, int user)
     }
 #endif
 
-    if (ssd->gc_count % 100 == 0) {
-        printf("[%s],real_blocking_gc=%d,total_gc_cal=%d, avg_copy_pages=%d, "
-                "total_stacking_gc=%d\n", ssd->ssdname, 
-                ssd->gc_count-ssd->stacking_gc_count, ssd->gc_count, 
-                copy_page_nb, ssd->stacking_gc_count);
-    }
+    // if (ssd->gc_count % 100 == 0) {
+    //     printf("[%s],real_blocking_gc=%d,total_gc_cal=%d, avg_copy_pages=%d, "
+    //             "total_stacking_gc=%d\n", ssd->ssdname, 
+    //             ssd->gc_count-ssd->stacking_gc_count, ssd->gc_count, 
+    //             copy_page_nb, ssd->stacking_gc_count);
+    // }
 
 #ifdef MONITOR_ON
 	char szTemp[1024];
@@ -244,17 +248,14 @@ int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_
 
 	int FLASH_PER_CHANNEL = sc->FLASH_NB / sc->CHANNEL_NB;
 	int PLANE_PER_CHANNEL = FLASH_PER_CHANNEL * sc->PLANES_PER_FLASH;
-	int min_channel = user_head->started_channel;
-	int max_channel = user_head->ended_channel;
-	int min_plane = min_channel * PLANE_PER_CHANNEL;
-	int max_plane = (max_channel + 1) * PLANE_PER_CHANNEL - 1;
 
     void *victim_block_list = ssd->victim_block_list;
 
 	int i, j;
+	int index;
 	int entry_nb = 0;
 
-	victim_block_root* curr_v_b_root;
+	victim_block_root* curr_v_b_root, * tmp_root;
 	victim_block_entry* curr_v_b_entry;
 	victim_block_entry* victim_block = NULL;
 
@@ -268,36 +269,44 @@ int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_
 
 	/* if GC_TRIGGER_OVERALL is defined, then */
 #ifdef GC_TRIGGER_OVERALL
-	curr_v_b_root = (victim_block_root*)victim_block_list;
-	curr_v_b_root += min_plane;
+	tmp_root = (victim_block_root*)victim_block_list;
 
-	for(i=min_plane;i<=max_plane;i++){
+	for(i = user_head->started_channel * FLASH_PER_CHANNEL; i < user_head->ended_channel * FLASH_PER_CHANNEL; i++) {
+		for (j = 0; j < sc->PLANES_PER_FLASH; ++i) {
+			index = j * sc->FLASH_NB + i;
+			curr_v_b_root = tmp_root + index;
 
-		if(curr_v_b_root->victim_block_nb != 0){
+			if(curr_v_b_root->victim_block_nb != 0){
 
-			entry_nb = curr_v_b_root->victim_block_nb;
-			curr_v_b_entry = curr_v_b_root->head;
-			if(victim_block == NULL){
-				victim_block = curr_v_b_root->head;
-				b_s_entry = GET_BLOCK_STATE_ENTRY(ssd, victim_block->phy_flash_nb, victim_block->phy_block_nb);
-				curr_valid_page_nb = b_s_entry->valid_page_nb;
+				entry_nb = curr_v_b_root->victim_block_nb;
+				curr_v_b_entry = curr_v_b_root->head;
+
+				if(victim_block == NULL){
+					victim_block = curr_v_b_root->head;
+#ifdef DEBUG
+					assert(victim_block->phy_flash_nb == i);
+#endif //DEBUG
+					
+					b_s_entry = GET_BLOCK_STATE_ENTRY(ssd, victim_block->phy_flash_nb, victim_block->phy_block_nb);
+					curr_valid_page_nb = b_s_entry->valid_page_nb;
+				}
 			}
-		}
-		else{
-			entry_nb = 0;
-		}
-
-		for(j=0;j<entry_nb;j++){
-			b_s_entry = GET_BLOCK_STATE_ENTRY(ssd, curr_v_b_entry->phy_flash_nb, curr_v_b_entry->phy_block_nb);
-	
-			if(curr_valid_page_nb > b_s_entry->valid_page_nb){
-				victim_block = curr_v_b_entry;
-				curr_valid_page_nb = b_s_entry->valid_page_nb;
+			else{
+				entry_nb = 0;
 			}
-			curr_v_b_entry = curr_v_b_entry->next;
-		}
 
-		curr_v_b_root += 1;
+			for(j=0;j<entry_nb;j++){
+				b_s_entry = GET_BLOCK_STATE_ENTRY(ssd, curr_v_b_entry->phy_flash_nb, curr_v_b_entry->phy_block_nb);
+		
+				if(curr_valid_page_nb > b_s_entry->valid_page_nb){
+					victim_block = curr_v_b_entry;
+					curr_valid_page_nb = b_s_entry->valid_page_nb;
+				}
+				curr_v_b_entry = curr_v_b_entry->next;
+			}
+
+			curr_v_b_root += 1;
+		}
 	}
 #else
 	/* if GC_TREGGER_OVERALL is not defined, then */

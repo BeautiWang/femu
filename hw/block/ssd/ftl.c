@@ -718,13 +718,17 @@ void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
 
     struct USER_INFO *user_head = ssd->user;
     struct ssdconf *sc = &(ssd->ssdparams);
-    int page_per_channel = sc->PAGE_NB * sc->BLOCK_NB * (sc->FLASH_NB / sc->CHANNEL_NB);
+	int flash_per_channel = sc->FLASH_NB / sc->CHANNEL_NB;
+	int plane_per_channel = flash_per_channel * sc->PLANES_PER_FLASH;
+    int page_per_channel = sc->PAGE_NB * sc->BLOCK_NB * flash_per_channel;
     int started_channel = 0;
     for (int i = 0; i < USER_NUM; ++i) {
         user_head->channel_num = user_channel[i];
         user_head->started_channel = started_channel;
         user_head->ended_channel = started_channel + user_head->channel_num;
-		user_head->next_write_channel = started_channel;
+		user_head->started_plane = started_channel * plane_per_channel;
+		user_head->ended_plane = user_head->ended_channel * plane_per_channel;
+		user_head->next_write_plane = user_head->started_plane;
         user_head->minLPN = started_channel * page_per_channel;
         user_head->maxLPN = user_head->ended_channel * page_per_channel;
 

@@ -413,7 +413,10 @@ empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int user, int mode, int
     int PAGE_NB = sc->PAGE_NB;
     int PLANES_PER_FLASH = sc->PLANES_PER_FLASH;
 
-    if(ssd->total_empty_block_nb == 0){
+	struct USER_INFO* user_head = ssd->user + user;
+	
+	if (user_head->free_block_num == 0) {
+    //if(ssd->total_empty_block_nb == 0){
         printf("ERROR[%s] There is no empty block\n", __FUNCTION__);
         return NULL;
     }
@@ -423,18 +426,16 @@ empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int user, int mode, int
     empty_block_entry* curr_empty_block;
     empty_block_root* curr_root_entry;
 
-	struct USER_INFO *user_head = &(ssd->user[user]);
-
     // while(ssd->total_empty_block_nb != 0){
 	while(user_head->free_block_num != 0) {
 
         if(mode == VICTIM_OVERALL){
-            curr_root_entry = (empty_block_root*)empty_block_list + user_head->next_write_channel;
+            curr_root_entry = (empty_block_root*)empty_block_list + user_head->next_write_plane;
 
             if(curr_root_entry->empty_block_nb == 0){
-                user_head->next_write_channel ++;
-				if (user_head->next_write_channel == user_head->ended_channel) {
-					user_head->next_write_channel = user_head->started_channel;
+                user_head->next_write_plane ++;
+				if (user_head->next_write_plane == user_head->ended_plane) {
+					user_head->next_write_plane = user_head->started_plane;
 				}
                 continue;
             }
@@ -462,18 +463,18 @@ empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int user, int mode, int
 					user_head->free_block_num--;
 					user_head->used_block_num++;
 
-                    user_head->next_write_channel ++;
-					if (user_head->next_write_channel == user_head->ended_channel) {
-						user_head->next_write_channel = user_head->started_channel;
+                    user_head->next_write_plane ++;
+					if (user_head->next_write_plane == user_head->ended_plane) {
+						user_head->next_write_plane = user_head->started_plane;
 					}
                     continue;
                 }
-                user_head->next_write_channel ++;
-				if (user_head->next_write_channel == user_head->ended_channel) {
-					user_head->next_write_channel = user_head->started_channel;
+                user_head->next_write_plane ++;
+				if (user_head->next_write_plane == user_head->ended_plane) {
+					user_head->next_write_plane = user_head->started_plane;
 				}
 				//PRINT_PLANE_STAT(ssd);
-                PRINT_USER_STAT(ssd);
+                //PRINT_USER_STAT(ssd);
 				return curr_empty_block;
             }
         }
@@ -803,7 +804,16 @@ int UPDATE_BLOCK_STATE_ENTRY(struct ssdstate *ssd, unsigned int phy_flash_nb, un
 	int* valid_array = b_s_entry->valid_array;
 
 	if(valid == VALID){
-		valid_array[phy_page_nb] += 1;
+		if (valid_array[phy_page_nb] == 0) {
+			printf("ERROR[%s]: cannot make an invalid page valid.\n");
+		}
+		else if (valid_array[phy_page_nb] == -1) {
+			valid_array[phy_page_nb] = 1;
+		}
+		else {
+			valid_array[phy_page_nb] += 1;
+		}
+		
 	}
 	else if(valid == INVALID){
 		valid_array[phy_page_nb] -= 1;
