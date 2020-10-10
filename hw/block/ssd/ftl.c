@@ -44,6 +44,16 @@ FILE* fp_ftl_r;
 
 extern int64_t blocking_to;
 
+/* Print In File. */
+#ifdef PRINT1
+#define PRINT_INTERVAL 1e6
+int32_t unique_lpn_nb;
+char file_motivation[] =  "~/statictic.csv";
+int64_t last_print_time;
+FILE *fp_motivation;
+#endif //PRINT1
+
+
 //extern double ssd_util;
 //extern int64_t mygc_cnt, last_gc_cnt;
 
@@ -229,6 +239,9 @@ int64_t _FTL_READ(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
     int64_t cur_need_to_emulate_tt = 0, max_need_to_emulate_tt = 0;
 
     int64_t curtime = get_usec();
+
+
+
 #if 0
     if (curtime - last_time >= 1e7) { /* Coperd: every ten second */
         //printf("%s, %ld, %ld, %ld\n", __func__, pthread_self(), curtime, last_time);
@@ -536,6 +549,9 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 		if (old_fp != -1) {	//之前已经存在映射，所以需要将旧映射取消
 			UPDATE_OLD_PAGE_MAPPING(ssd, lpn);
 		}
+		else {
+			unique_lpn_nb ++;
+		}
 		if (finger_print[new_fp] != -1) {
 			//不需要写操作
 			UPDATE_NEW_PAGE_MAPPING(ssd, lpn, new_fp, finger_print[new_fp]);
@@ -598,7 +614,20 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 #ifdef GC_ON
 	GC_CHECK(ssd, user, CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn));
 #endif
-
+#ifdef PRINT1
+	int64_t now_time = get_usec();
+	if (last_print_time - now_time > PRINT_INTERVAL) {
+		fp_motivation = fopen(file_motivation, "a");
+		if (fp_motivation == NULL) {
+			myPanic(__FUNCTION__, "Outputfile open error!");
+		}
+		fprintf(fp_motivation, "%d\n", unique_lpn_nb);
+		fclose(fp_motivation);
+		fp_motivation = NULL;
+		last_print_time = now_time;
+	}
+	
+#endif
 	return max_need_to_emulate_tt; 
 }
 
@@ -701,6 +730,17 @@ bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd) {
 #endif //DEBUG
 
 void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
+	unique_lpn_nb = 0;
+#ifdef PRINT1
+	/* Initialize Print Time. */
+	last_print_time = get_usec();	
+	fp_motivation = fopen(file_motivation, "w");
+	if (fp_motivation == NULL) {
+		myPanic(__FUNCTION__, "Output file open error!");
+	}
+	fclose(fp_motivation);
+	fp_motivation = NULL;
+#endif
 #ifdef DEBUG
     assert(CHECK_MULTITENANT_LEGAL(ssd));
 #endif //DEBUG
