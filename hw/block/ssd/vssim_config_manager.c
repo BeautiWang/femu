@@ -89,7 +89,7 @@ void INIT_SSD_CONFIG(struct ssdstate *ssd)
 			}
 			else if(strcmp(szCommand, "OVP") == 0)
 			{
-				fscanf(pfData, "%d", &sc->OVP);
+				fscanf(pfData, "%lf", &sc->OVP);
 			}
             else if (strcmp(szCommand, "GC_MODE") == 0)
             {
@@ -236,7 +236,7 @@ void INIT_SSD_CONFIG(struct ssdstate *ssd)
 	sc->GC_THRESHOLD_BLOCK_NB_HARD = (int)((1-sc->GC_THRESHOLD_HARD) * (double)sc->BLOCK_MAPPING_ENTRY_NB);
 	sc->GC_THRESHOLD_BLOCK_NB_EACH = (int)((1-sc->GC_THRESHOLD) * (double)sc->EACH_EMPTY_TABLE_ENTRY_NB);
 	if(sc->OVP != 0){
-		sc->GC_VICTIM_NB = sc->FLASH_NB * sc->BLOCK_NB * sc->OVP / 100 / 2;
+		sc->GC_VICTIM_NB = (int)(sc->FLASH_NB * sc->BLOCK_NB * sc->OVP) / 100 / 2;
 	}
 	else{
 		sc->GC_VICTIM_NB = 1;

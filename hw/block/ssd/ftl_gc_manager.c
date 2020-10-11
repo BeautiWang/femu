@@ -18,24 +18,34 @@
 void GC_CHECK(struct ssdstate *ssd, int user, unsigned int phy_flash_nb, unsigned int phy_block_nb)
 {
     struct ssdconf *sc = &(ssd->ssdparams);
+	struct USER_INFO *user_head = ssd->user + user;
     int FLASH_NB = sc->FLASH_NB;
     int PLANES_PER_FLASH = sc->PLANES_PER_FLASH;
     void *empty_block_list = ssd->empty_block_list;
     int GC_THRESHOLD_BLOCK_NB_EACH = sc->GC_THRESHOLD_BLOCK_NB_EACH;
-    int GC_VICTIM_NB = sc->GC_VICTIM_NB;
+    //int GC_VICTIM_NB = sc->GC_VICTIM_NB;
+	int GC_VICTIM_NB = (int)(user_head->channel_num * (sc->FLASH_NB / sc->CHANNEL_NB) * sc->BLOCK_NB * sc->OVP) / 2;
+	if(!GC_VICTIM_NB>=1) {
+		printf("%d %d %d %d %lf\n", user_head->channel_num, sc->FLASH_NB , sc->CHANNEL_NB, sc->BLOCK_NB ,sc->OVP);
+		getchar();
+	}
+
+#ifdef DEBUG
+	assert(GC_VICTIM_NB>=1);
+#endif //DEBUG
 
 	int i, ret;
 	int plane_nb = phy_block_nb % PLANES_PER_FLASH;
 	int mapping_index = plane_nb * FLASH_NB + phy_flash_nb;
 
-	struct USER_INFO *user_head = ssd->user + user;
+	
 	
 #ifdef GC_TRIGGER_OVERALL
 	if (user_head->free_block_num < user_head->GC_THRESHOLD_BLOCK_NB)
 	// if(ssd->total_empty_block_nb < sc->GC_THRESHOLD_BLOCK_NB)
 	/*if(total_empty_block_nb <= FLASH_NB * PLANES_PER_FLASH)*/
 	{
-		assert(GC_VICTIM_NB == 1);
+
 		for(i=0; i<GC_VICTIM_NB; i++){
 			ret = GARBAGE_COLLECTION(ssd, -1, user);
 			if(ret == FAIL){

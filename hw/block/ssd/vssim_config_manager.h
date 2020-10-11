@@ -31,7 +31,7 @@ struct ssdconf {
     //int64_t *gc_slot;
 
     int WAY_NB;
-    int OVP;
+    double OVP;
 
     /* Mapping Table */
     int DATA_BLOCK_NB;

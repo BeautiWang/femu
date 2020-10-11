@@ -23,6 +23,8 @@
 
 #define USER_NUM 2
 #define USER_CHANNEL_ARRAY {4, 4}
+//USER CAP(GB)
+#define USER_CAPACITY_ARRAY {4, 4}
 #define UNIQUE_PAGE_NB 2097152
 #define PRINT1 1
 

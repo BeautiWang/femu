@@ -48,7 +48,7 @@ extern int64_t blocking_to;
 #ifdef PRINT1
 #define PRINT_INTERVAL 1e6
 int32_t unique_lpn_nb;
-char file_motivation[] =  "~/statictic.csv";
+char file_motivation[] =  "/home/nvm/statictic.csv";
 int64_t last_print_time;
 FILE *fp_motivation;
 #endif //PRINT1
@@ -616,7 +616,7 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 #endif
 #ifdef PRINT1
 	int64_t now_time = get_usec();
-	if (last_print_time - now_time > PRINT_INTERVAL) {
+	if (now_time - last_print_time > PRINT_INTERVAL) {
 		fp_motivation = fopen(file_motivation, "a");
 		if (fp_motivation == NULL) {
 			myPanic(__FUNCTION__, "Outputfile open error!");
@@ -718,13 +718,30 @@ int32_t sum(const int array[]) {
 #ifdef DEBUG
 bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd) {
     struct ssdconf *sc = &(ssd->ssdparams);
-    int user_channel[] = USER_CHANNEL_ARRAY;
+    
+	/* Checke channel number */
+	int user_channel[] = USER_CHANNEL_ARRAY;
     int config_channel_num = sum(user_channel);
     int channel_num = sc->CHANNEL_NB;
     if (config_channel_num != channel_num) {
         myPanic(__FUNCTION__, "Channel Number is illegal!");
         return false;
     }
+
+	/* Check capacity */
+	int user_capacity[] = USER_CAPACITY_ARRAY;
+	int cap_sum = sum(user_capacity);
+	int physical_cap = sc->FLASH_NB * sc->BLOCK_NB * sc->PAGE_NB * (sc->PAGE_SIZE / 1024) / (1024 * 1024);
+	if (physical_cap < cap_sum) {
+		printf("sc->FLASH_NB = %d, sc->BLOCK_NB = %d, sc->PAGE_NB = %d, sc->PAGE_SIZE = %d\n", sc->FLASH_NB, sc->BLOCK_NB, sc->PAGE_NB, sc->PAGE_SIZE);
+		printf("physical_cap = %d, cap_sum = %d\n", physical_cap, cap_sum);
+		myPanic(__FUNCTION__, "User Capacity is illegal!");
+	}
+
+	sc->OVP = ((physical_cap - cap_sum) * 1.0) / physical_cap;
+
+	printf("OVP = %lf\n", sc->OVP);
+
     return true;
 }
 #endif //DEBUG
@@ -762,6 +779,9 @@ void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
 	int plane_per_channel = flash_per_channel * sc->PLANES_PER_FLASH;
     int page_per_channel = sc->PAGE_NB * sc->BLOCK_NB * flash_per_channel;
     int started_channel = 0;
+	int user_cap[] = USER_CAPACITY_ARRAY;
+	int PAGE_PER_GB = 1024 * 1024 * 1024 / sc->PAGE_SIZE;
+	int total_cap = 0;
     for (int i = 0; i < USER_NUM; ++i) {
         user_head->channel_num = user_channel[i];
         user_head->started_channel = started_channel;
@@ -769,8 +789,9 @@ void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
 		user_head->started_plane = started_channel * plane_per_channel;
 		user_head->ended_plane = user_head->ended_channel * plane_per_channel;
 		user_head->next_write_plane = user_head->started_plane;
-        user_head->minLPN = started_channel * page_per_channel;
-        user_head->maxLPN = user_head->ended_channel * page_per_channel;
+        user_head->minLPN = total_cap * PAGE_PER_GB;
+		total_cap += user_cap[i];
+        user_head->maxLPN = total_cap * PAGE_PER_GB;
 
 		user_head->TOTAL_EMPTY_BLOCK_NB = sc->BLOCK_NB * (sc->FLASH_NB / sc->CHANNEL_NB) * user_channel[i];
 		user_head->GC_THRESHOLD_BLOCK_NB = (int)((1-sc->GC_THRESHOLD) * (double)user_head->TOTAL_EMPTY_BLOCK_NB);
