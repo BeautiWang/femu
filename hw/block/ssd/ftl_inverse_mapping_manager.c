@@ -430,13 +430,10 @@ empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int user, int mode, int
 	while(user_head->free_block_num != 0) {
 
         if(mode == VICTIM_OVERALL){
-            curr_root_entry = (empty_block_root*)empty_block_list + user_head->next_write_plane;
+            curr_root_entry = (empty_block_root*)empty_block_list + user_head->next_mapping_index;
 
             if(curr_root_entry->empty_block_nb == 0){
-                user_head->next_write_plane ++;
-				if (user_head->next_write_plane == user_head->ended_plane) {
-					user_head->next_write_plane = user_head->started_plane;
-				}
+                CAL_NEXT_MAPPING_INDEX(ssd, user_head);
                 continue;
             }
             else{
@@ -463,16 +460,10 @@ empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int user, int mode, int
 					user_head->free_block_num--;
 					user_head->used_block_num++;
 
-                    user_head->next_write_plane ++;
-					if (user_head->next_write_plane == user_head->ended_plane) {
-						user_head->next_write_plane = user_head->started_plane;
-					}
+                    CAL_NEXT_MAPPING_INDEX(ssd, user_head);
                     continue;
                 }
-                user_head->next_write_plane ++;
-				if (user_head->next_write_plane == user_head->ended_plane) {
-					user_head->next_write_plane = user_head->started_plane;
-				}
+                CAL_NEXT_MAPPING_INDEX(ssd, user_head);
 				//PRINT_PLANE_STAT(ssd);
                 //PRINT_USER_STAT(ssd);
 				return curr_empty_block;
@@ -519,6 +510,12 @@ empty_block_entry* GET_EMPTY_BLOCK(struct ssdstate *ssd, int user, int mode, int
 
                     /* Eject Empty Block from the list */
                     INSERT_VICTIM_BLOCK(ssd, curr_empty_block);
+
+#ifdef DEBUG
+					if (!list_check(ssd)) {
+						myPanic(__FUNCTION__, "List Error.");
+					}
+#endif //DEBUG
 
                     /* Update The total number of empty block */
                     ssd->total_empty_block_nb--;
@@ -771,14 +768,17 @@ int UPDATE_BLOCK_STATE(struct ssdstate *ssd, unsigned int phy_flash_nb, unsigned
         int i;
         block_state_entry* b_s_entry = GET_BLOCK_STATE_ENTRY(ssd, phy_flash_nb, phy_block_nb);
 
-	b_s_entry->type = type;
+		b_s_entry->type = type;
 	
         if(type == EMPTY_BLOCK){
-            char *valid_array = b_s_entry->valid_array;
-                for(i=0;i<PAGE_NB;i++){
-                        UPDATE_BLOCK_STATE_ENTRY(ssd, phy_flash_nb, phy_block_nb, i, 0);
-                        //valid_array[i] = '0';
-                }
+            int *valid_array = b_s_entry->valid_array;
+			for(i=0;i<PAGE_NB;i++){
+					UPDATE_BLOCK_STATE_ENTRY(ssd, phy_flash_nb, phy_block_nb, i, 0);
+					//valid_array[i] = '0';
+			}
+			#ifdef DEBUG
+			b_s_entry->valid_page_nb == PAGE_NB;
+			#endif //DEBUG
                 //////////////b_s_entry->valid_page_nb = PAGE_NB;
         }
 

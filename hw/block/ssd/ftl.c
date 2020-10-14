@@ -742,6 +742,10 @@ bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd) {
 
 	printf("OVP = %lf\n", sc->OVP);
 
+#ifdef DEBUG
+	assert(sc->OVP >= 0 && sc->OVP < 1);
+#endif //DEBUG
+
     return true;
 }
 #endif //DEBUG
@@ -788,7 +792,9 @@ void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
         user_head->ended_channel = started_channel + user_head->channel_num;
 		user_head->started_plane = started_channel * plane_per_channel;
 		user_head->ended_plane = user_head->ended_channel * plane_per_channel;
-		user_head->next_write_plane = user_head->started_plane;
+
+		user_head->next_mapping_index = user_head->started_channel * flash_per_channel;
+
         user_head->minLPN = total_cap * PAGE_PER_GB;
 		total_cap += user_cap[i];
         user_head->maxLPN = total_cap * PAGE_PER_GB;
@@ -834,6 +840,40 @@ int CAL_USER_BY_LPN(struct ssdstate *ssd, int64_t lpn) {
 
 	if(res == -1) myPanic(__FUNCTION__, "Cannot find the user");
 	return res;
+}
+
+void CAL_NEXT_MAPPING_INDEX(struct ssdstate *ssd, struct USER_INFO *user_head) {
+	struct ssdconf *sc = &(ssd->ssdparams);
+	int mapping_index = user_head->next_mapping_index;
+	int FLASH_NB = sc->FLASH_NB;
+	int PLANE_NB = sc->PLANES_PER_FLASH;
+	int FLASH_PER_CHANNEL = sc->FLASH_NB / sc->CHANNEL_NB;
+
+	int min_channel = user_head->started_channel;
+	int max_channel = user_head->ended_channel;
+	int min_flash = min_channel * FLASH_PER_CHANNEL;
+	int max_flash = max_channel * FLASH_PER_CHANNEL;
+
+	int channel_nb = user_head->channel_num;
+	
+#ifdef DEBUG
+	assert(channel_nb == (max_channel - min_channel));
+#endif //DEBUG
+
+	int fnb = mapping_index % FLASH_NB, pnb = mapping_index / FLASH_NB;
+
+	fnb = fnb + 1;
+
+	if (fnb == max_flash) {
+		fnb = min_flash;
+		pnb = pnb + 1;
+		if (pnb == PLANE_NB) {
+			pnb = 0;
+		}
+	}
+
+	user_head->next_mapping_index = pnb * FLASH_NB + fnb;
+	//printf("next_mapping_index = %d\n", user_head->next_mapping_index);
 }
 
 #ifdef DEBUG
@@ -899,6 +939,22 @@ void PRINT_PLANE_STAT(struct ssdstate *ssd) {
 	return;
 }
 
+bool list_check(struct ssdstate *ssd) {
+	struct ssdconf *sc = &(ssd->ssdparams);
+	int EMPTY_TABLE_ENTRY_NB = sc->EMPTY_TABLE_ENTRY_NB;
+	int VICTIM_TABLE_ENTRY_NB = sc->VICTIM_TABLE_ENTRY_NB;
+	int EXPECT = (sc->BLOCK_NB * sc->FLASH_NB) / EMPTY_TABLE_ENTRY_NB;
+
+	assert(EMPTY_TABLE_ENTRY_NB == VICTIM_TABLE_ENTRY_NB);
+
+	for (int i = 0; i < EMPTY_TABLE_ENTRY_NB; ++i) {
+		if (((victim_block_root *)ssd->victim_block_list)[i].victim_block_nb + 
+			((empty_block_root *)ssd->empty_block_list)[i].empty_block_nb != EXPECT)
+			return false;
+	}
+	return true;
+}
+
 #endif //DEBUG
 
 void INIT_zipf_AND_fingerprint(struct ssdstate *ssd)
@@ -950,3 +1006,4 @@ int64_t FP_GENERATOR(struct ssdstate *ssd, int64_t lpn){
 
 	return fp;
 }
+

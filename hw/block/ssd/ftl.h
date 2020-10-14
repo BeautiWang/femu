@@ -41,7 +41,7 @@ struct USER_INFO {
     int32_t started_plane;
     int32_t ended_plane;
 
-    int32_t next_write_plane;
+    int next_mapping_index;
 
     /* Garbage Collection */
     int gc_count;
@@ -143,10 +143,13 @@ int32_t sum(const int array[]);
 void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd);
 int CAL_USER_BY_CHANNEL(struct ssdstate *ssd, int channel);
 int CAL_USER_BY_LPN(struct ssdstate *ssd, int64_t lpn);
+void CAL_NEXT_MAPPING_INDEX(struct ssdstate *ssd, struct USER_INFO *user_head);
 
 /* Deduplication */
 void INIT_zipf_AND_fingerprint(struct ssdstate *ssd);
 int64_t FP_GENERATOR(struct ssdstate *ssd, int64_t lpn);
+bool list_check(struct ssdstate *ssd);
+
 
 /* debug */
 #define DEBUG

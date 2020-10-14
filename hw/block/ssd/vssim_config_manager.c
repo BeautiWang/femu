@@ -230,8 +230,8 @@ void INIT_SSD_CONFIG(struct ssdstate *ssd)
 
 	/* Garbage Collection */
 #if defined PAGE_MAP || defined BLOCK_MAP || defined DA_MAP
-	sc->GC_THRESHOLD = 0.75; // 0.7 for 70%, 0.9 for 90%
-	sc->GC_THRESHOLD_HARD = 0.78;
+	sc->GC_THRESHOLD = 0.8; // 0.7 for 70%, 0.9 for 90%
+	sc->GC_THRESHOLD_HARD = 0.9;
 	sc->GC_THRESHOLD_BLOCK_NB = (int)((1-sc->GC_THRESHOLD) * (double)sc->BLOCK_MAPPING_ENTRY_NB);
 	sc->GC_THRESHOLD_BLOCK_NB_HARD = (int)((1-sc->GC_THRESHOLD_HARD) * (double)sc->BLOCK_MAPPING_ENTRY_NB);
 	sc->GC_THRESHOLD_BLOCK_NB_EACH = (int)((1-sc->GC_THRESHOLD) * (double)sc->EACH_EMPTY_TABLE_ENTRY_NB);

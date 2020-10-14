@@ -117,8 +117,13 @@ int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip, int user)
 #ifdef FTL_DEBUG
 		printf("[%s] There is no available victim block\n", __FUNCTION__);
 #endif
+#ifdef DEBUG
+		printf("[%s] There is no available victim block\n", __FUNCTION__);
+#endif
 		return FAIL;
 	}
+
+	//printf("victim_phy_flash_nb = %u\n", victim_phy_flash_nb);
 
 	int plane_nb = victim_phy_block_nb % PLANES_PER_FLASH;
 	int mapping_index = plane_nb * FLASH_NB + victim_phy_flash_nb;
@@ -179,10 +184,17 @@ int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip, int user)
 	SSD_BLOCK_ERASE(ssd, victim_phy_flash_nb, victim_phy_block_nb);
 	UPDATE_BLOCK_STATE(ssd, victim_phy_flash_nb, victim_phy_block_nb, EMPTY_BLOCK);
 	INSERT_EMPTY_BLOCK(ssd, victim_phy_flash_nb, victim_phy_block_nb);
+#ifdef DEBUG
+	if (!list_check(ssd)) {
+		myPanic(__FUNCTION__, "List Error.");
+	}
+#endif //DEBUG
+
 	user_head->free_block_num ++;
 	ssd->time_up += get_ts_in_ns() - up_start;
 
 	ssd->gc_count++;
+	user_head->used_block_num--;
 
     /* Coperd: keep trace of #gc of last time */
     ssd->mygc_cnt += 1; 
@@ -261,7 +273,7 @@ int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_
 
     void *victim_block_list = ssd->victim_block_list;
 
-	int i, j;
+	int i, j, k;
 	int index;
 	int entry_nb = 0;
 
@@ -282,7 +294,7 @@ int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_
 	tmp_root = (victim_block_root*)victim_block_list;
 
 	for(i = user_head->started_channel * FLASH_PER_CHANNEL; i < user_head->ended_channel * FLASH_PER_CHANNEL; i++) {
-		for (j = 0; j < sc->PLANES_PER_FLASH; ++i) {
+		for (j = 0; j < sc->PLANES_PER_FLASH; ++j) {
 			index = j * sc->FLASH_NB + i;
 			curr_v_b_root = tmp_root + index;
 
@@ -305,7 +317,7 @@ int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_
 				entry_nb = 0;
 			}
 
-			for(j=0;j<entry_nb;j++){
+			for(k=0; k<entry_nb; k++){
 				b_s_entry = GET_BLOCK_STATE_ENTRY(ssd, curr_v_b_entry->phy_flash_nb, curr_v_b_entry->phy_block_nb);
 		
 				if(curr_valid_page_nb > b_s_entry->valid_page_nb){
@@ -315,7 +327,7 @@ int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_
 				curr_v_b_entry = curr_v_b_entry->next;
 			}
 
-			curr_v_b_root += 1;
+			// curr_v_b_root += 1;
 		}
 	}
 #else
