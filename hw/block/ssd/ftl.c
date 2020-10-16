@@ -47,7 +47,6 @@ extern int64_t blocking_to;
 /* Print In File. */
 #ifdef PRINT1
 #define PRINT_INTERVAL 1e6
-int32_t unique_lpn_nb;
 char file_motivation[] =  "/home/nvm/statictic.csv";
 int64_t last_print_time;
 FILE *fp_motivation;
@@ -467,6 +466,14 @@ int64_t _FTL_READ(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 	printf("[%s] Complete\n", __FUNCTION__);
 #endif
 
+#ifdef PRINT1
+	int64_t now_time = get_usec();
+	if (now_time - last_print_time > PRINT_INTERVAL) {
+		FPRINT_MOTIVATION(ssd);
+		last_print_time = now_time;
+	}
+#endif
+
 	return max_need_to_emulate_tt;
 }
 
@@ -550,7 +557,7 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 			UPDATE_OLD_PAGE_MAPPING(ssd, lpn);
 		}
 		else {
-			unique_lpn_nb ++;
+			ssd->unique_lpn_nb ++;
 		}
 		if (finger_print[new_fp] != -1) {
 			//不需要写操作
@@ -617,18 +624,22 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 #ifdef PRINT1
 	int64_t now_time = get_usec();
 	if (now_time - last_print_time > PRINT_INTERVAL) {
-		fp_motivation = fopen(file_motivation, "a");
-		if (fp_motivation == NULL) {
-			myPanic(__FUNCTION__, "Outputfile open error!");
-		}
-		fprintf(fp_motivation, "%d\n", unique_lpn_nb);
-		fclose(fp_motivation);
-		fp_motivation = NULL;
+		FPRINT_MOTIVATION(ssd);
 		last_print_time = now_time;
 	}
-	
+
 #endif
 	return max_need_to_emulate_tt; 
+}
+
+void FPRINT_MOTIVATION(struct ssdstate *ssd) {
+	fp_motivation = fopen(file_motivation, "a");
+	if (fp_motivation == NULL) {
+		myPanic(__FUNCTION__, "Outputfile open error!");
+	}
+	fprintf(fp_motivation, "unique_lpn_nb = %d, unique_ppn_nb = %d, ppn_validstate_sum = %d\n", ssd->unique_lpn_nb, ssd->unique_ppn_nb, ssd->ppn_valid_state_sum);
+	fclose(fp_motivation);
+	fp_motivation = NULL;
 }
 
 int femu_discard_process(struct ssdstate *ssd, uint32_t length, int64_t sector_nb) {
@@ -702,7 +713,7 @@ int femu_discard_process(struct ssdstate *ssd, uint32_t length, int64_t sector_n
 
 void myPanic(const char func[], const char msg[]) {
     printf("Error[%s], %s\n", func, msg);
-	getchar();
+	assert(0);
 	return;
 }
 
@@ -751,7 +762,6 @@ bool CHECK_MULTITENANT_LEGAL(struct ssdstate *ssd) {
 #endif //DEBUG
 
 void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
-	unique_lpn_nb = 0;
 #ifdef PRINT1
 	/* Initialize Print Time. */
 	last_print_time = get_usec();	
@@ -959,24 +969,31 @@ bool list_check(struct ssdstate *ssd) {
 
 void INIT_zipf_AND_fingerprint(struct ssdstate *ssd)
 {
+	struct ssdconf *sc = &(ssd->ssdparams);
 	int i;
 	double a=0.2, sum = 0.0;
 
-	ssd->Pzipf=(double *)calloc(UNIQUE_PAGE_NB + 1, sizeof(double));
-	ssd->fingerprint=(int64_t*)calloc(UNIQUE_PAGE_NB+1, sizeof(int64_t));
+#ifdef DUPLICATION
+	int fp_size = UNIQUE_PAGE_NB;
+#elif
+	int fp_size = sc->PAGE_MAPPING_ENTRY_NB;
+#endif
 
-	for(i=0;i<=UNIQUE_PAGE_NB;i++)
+	ssd->Pzipf=(double *)calloc(fp_size + 1, sizeof(double));
+	ssd->fingerprint=(int64_t*)calloc(fp_size+1, sizeof(int64_t));
+
+	for(i=0;i<=fp_size;i++)
 	{
 		ssd->Pzipf[i]=0.0;
 		ssd->fingerprint[i]=-1;
 	}
 
-	for(i=1;i<=UNIQUE_PAGE_NB;i++)
+	for(i=1;i<=fp_size;i++)
 	{
 		sum+=1/pow((double)i, a);
 	}
 
-	for(i=1;i<=UNIQUE_PAGE_NB;i++)
+	for(i=1;i<=fp_size;i++)
 	{
 		ssd->Pzipf[i]=ssd->Pzipf[i-1]+1/pow((double)i, a)/sum;
 	}
@@ -984,7 +1001,7 @@ void INIT_zipf_AND_fingerprint(struct ssdstate *ssd)
 
 int64_t FP_GENERATOR(struct ssdstate *ssd, int64_t lpn){
 	int64_t fp = -1;
-
+#ifdef DUPLICATION 
 	double data = ((double)rand() + 1) / ((double)RAND_MAX + 2);
 	int64_t low = 0, high = UNIQUE_PAGE_NB, mid;
 	while (low < high) {
@@ -1001,6 +1018,9 @@ int64_t FP_GENERATOR(struct ssdstate *ssd, int64_t lpn){
 			low = mid;
 		}
 	}
+#elif //DUPLICATION
+	fp = lpn;
+#endif //DUPLICATION
 
 	if (fp == -1) myPanic(__FUNCTION__, "fp == -1?");
 

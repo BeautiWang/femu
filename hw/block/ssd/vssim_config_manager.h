@@ -295,6 +295,9 @@ struct ssdstate {
     /* Deduplication */
     double *Pzipf;
     int64_t *fingerprint;
+    int unique_lpn_nb;
+    int unique_ppn_nb;
+    int ppn_valid_state_sum;
 };
 
 

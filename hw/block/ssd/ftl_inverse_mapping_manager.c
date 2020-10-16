@@ -804,19 +804,24 @@ int UPDATE_BLOCK_STATE_ENTRY(struct ssdstate *ssd, unsigned int phy_flash_nb, un
 	int* valid_array = b_s_entry->valid_array;
 
 	if(valid == VALID){
+		ssd->ppn_valid_state_sum ++;
 		if (valid_array[phy_page_nb] == 0) {
 			printf("ERROR[%s]: cannot make an invalid page valid.\n");
 		}
 		else if (valid_array[phy_page_nb] == -1) {
 			valid_array[phy_page_nb] = 1;
+			ssd->unique_ppn_nb ++;
 		}
 		else {
 			valid_array[phy_page_nb] += 1;
 		}
-		
 	}
 	else if(valid == INVALID){
+		ssd->ppn_valid_state_sum --;
 		valid_array[phy_page_nb] -= 1;
+		if (valid_array[phy_page_nb] == 0) {
+			ssd->unique_ppn_nb --;
+		}
 	}
 	else if(valid == 0){
 		valid_array[phy_page_nb] = -1;

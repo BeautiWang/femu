@@ -28,6 +28,8 @@
 #define UNIQUE_PAGE_NB 2097152
 #define PRINT1 1
 
+#define DUPLICATION
+
 //extern int GC_MODE;
 //extern int64_t *gc_slot;
 
