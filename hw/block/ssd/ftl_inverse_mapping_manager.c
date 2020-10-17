@@ -96,6 +96,24 @@ void INIT_VALID_ARRAY(struct ssdstate *ssd)
 	}
 }
 
+void INIT_PAGE_BELONGINGS(struct ssdstate *ssd) {
+	struct ssdconf *sc = &(ssd->ssdparams);
+    int PAGE_MAPPING_ENTRY_NB = sc->PAGE_MAPPING_ENTRY_NB;
+	int USER_NB = ssd->user_num;
+
+	ssd->page_belongings = (int **)malloc(PAGE_MAPPING_ENTRY_NB * sizeof(int *));
+	assert(ssd->page_belongings!=NULL);
+
+	for (int i=0; i<PAGE_MAPPING_ENTRY_NB; ++i) {
+		ssd->page_belongings[i] = (int *)malloc(USER_NB * sizeof(int));
+		assert(ssd->page_belongings[i] != NULL);
+		for (int j = 0; j < USER_NB; j++) {
+			ssd->page_belongings[i][j] = 0;
+		}
+	}
+	return;
+}
+
 void INIT_EMPTY_BLOCK_LIST(struct ssdstate *ssd)
 {
     struct ssdconf *sc = &(ssd->ssdparams);
@@ -860,3 +878,45 @@ void PRINT_VALID_ARRAY(unsigned int phy_flash_nb, unsigned int phy_block_nb)
 	printf("\n");
 }
 #endif
+
+int UPDATE_PPN_BELONGINGS(struct ssdstate *ssd, int user, int64_t lpn, int state) {
+	int64_t fp = GET_MAPPING_INFO(ssd, lpn);
+	assert(fp != -1);
+	int64_t ppn = GET_MAPPING_INFO_SECOND(ssd, fp);
+	assert(ppn != -1);
+	int **page_belongings = ssd->page_belongings;
+
+	if (state == VALID) {
+#ifdef DEBUG
+		assert(page_belongings[ppn][user] >= 0);
+#endif
+		page_belongings[ppn][user]++;
+	}
+	else if (state == INVALID) {
+#ifdef DEBUG
+		assert(page_belongings[ppn][user] > 0);
+#endif
+		page_belongings[ppn][user]--;
+	}
+	else {
+		printf("ERROR[%s]: valid state error!\n", __FUNCTION__);
+		exit(0);
+	}
+
+	return SUCCESS;
+}
+
+int COPY_PPN_BELONGINGS(struct ssdstate *ssd, int64_t dst_ppn, int64_t src_ppn) {
+	int user_nb = ssd->user_num;
+	int **page_belongings = ssd->page_belongings;
+
+	for(int i=0; i<user_nb; ++i) {
+#ifdef DEBUG
+		assert(page_belongings[dst_ppn][i] == 0);
+#endif
+		page_belongings[dst_ppn][i] = page_belongings[src_ppn][i];
+		page_belongings[src_ppn][i] = 0;
+	}
+
+	return SUCCESS;
+}

@@ -166,7 +166,7 @@ int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip, int user)
 			UPDATE_BLOCK_STATE_ENTRY(ssd, CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn), CALC_PAGE(ssd, new_ppn), valid_array[i]);
 			UPDATE_BLOCK_STATE(ssd, CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn), DATA_BLOCK);
 			UPDATE_INVERSE_MAPPING(ssd, new_ppn, fp);
-
+			COPY_PPN_BELONGINGS(ssd, new_ppn, old_ppn);
 			copy_page_nb++;
 		}
 	}

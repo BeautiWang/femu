@@ -33,6 +33,11 @@ typedef struct block_state_entry
 
 }block_state_entry;
 
+typedef struct user_mapping_cnt_entry
+{
+	int 
+}user_mapping_cnt_entry;
+
 typedef struct empty_block_root
 {
 	struct empty_block_entry* head;
@@ -69,6 +74,7 @@ typedef struct victim_block_entry
 
 void INIT_INVERSE_MAPPING_TABLE(struct ssdstate *ssd);
 void INIT_BLOCK_STATE_TABLE(struct ssdstate *ssd);
+void INIT_PAGE_BELONGINGS(struct ssdstate *ssd);
 void INIT_EMPTY_BLOCK_LIST(struct ssdstate *ssd);
 void INIT_VICTIM_BLOCK_LIST(struct ssdstate *ssd);
 void INIT_VALID_ARRAY(struct ssdstate *ssd);
@@ -93,5 +99,8 @@ int UPDATE_BLOCK_STATE(struct ssdstate *ssd, unsigned int phy_flash_nb, unsigned
 int UPDATE_BLOCK_STATE_ENTRY(struct ssdstate *ssd, unsigned int phy_flash_nb, unsigned int phy_block_nb, unsigned int phy_page_nb, int valid);
 
 void PRINT_VALID_ARRAY(struct ssdstate *ssd, unsigned int phy_flash_nb, unsigned int phy_block_nb);
+
+int UPDATE_PPN_BELONGINGS(struct ssdstate *ssd, int user, int64_t lpn, int state);
+int COPY_PPN_BELONGINGS(struct ssdstate *ssd, int64_t dst_ppn, int64_t src_ppn);
 
 #endif

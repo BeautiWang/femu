@@ -110,6 +110,7 @@ void FTL_INIT(struct ssdstate *ssd)
 		INIT_MAPPING_TABLE(ssd);
 		INIT_INVERSE_MAPPING_TABLE(ssd);
 		INIT_BLOCK_STATE_TABLE(ssd);
+		INIT_PAGE_BELONGINGS(ssd);
 		INIT_VALID_ARRAY(ssd);
 		INIT_EMPTY_BLOCK_LIST(ssd);
 		INIT_VICTIM_BLOCK_LIST(ssd);
@@ -295,6 +296,8 @@ int64_t _FTL_READ(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 	int read_page_nb = 0;
 	int io_page_nb;
 
+	int lpn_user = -1, ppn_user = -1;
+
 	nand_io_info* n_io_info = NULL;
 
     int num_flash = 0, num_blk = 0, num_channel = 0, num_plane = 0;
@@ -322,7 +325,15 @@ int64_t _FTL_READ(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 		else {
 			ppn = GET_MAPPING_INFO_SECOND(ssd, fp);
 		}
-		
+
+		lpn_user = CAL_USER_BY_LPN(ssd, lpn);
+		ppn_user = CAL_USER_BY_PPN(ssd, ppn);
+		if (lpn_user == ppn_user) {
+			ssd->user[ppn_user].self_page_read++;
+		}
+		else {
+			ssd->user[ppn_user].other_page_read++;
+		}
 
 		if(ppn == -1){
 #ifdef FIRM_IO_BUFFER
@@ -508,6 +519,7 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 	int64_t lba = sector_nb;
 	int64_t lpn;
 	int user;
+	int ppn_user;
 	int64_t new_ppn;
 	int64_t new_fp;
 	int64_t old_fp = -1;
@@ -552,16 +564,26 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 #endif //DEBUG
 		
 		old_fp = GET_MAPPING_INFO(ssd, lpn);
+		old_ppn = GET_MAPPING_INFO_SECOND(ssd, old_fp);
 		new_fp = FP_GENERATOR(ssd, lpn);
 		if (old_fp != -1) {	//之前已经存在映射，所以需要将旧映射取消
+			UPDATE_PPN_BELONGINGS(ssd, user, lpn, INVALID);	//取消之前，首先根据映射表找到物理页，然后改一下索引位置
 			UPDATE_OLD_PAGE_MAPPING(ssd, lpn);
+			ppn_user = CAL_USER_BY_PPN(ssd, old_ppn);
+			if (ppn_user != user) {	//旧页不在这个用户的物理页上
+				ssd->user[user].not_in_user_lpn --;
+			}
+			else {
+				ssd->user[user].in_user_lpn --;
+			}
 		}
 		else {
 			ssd->unique_lpn_nb ++;
 		}
 		if (finger_print[new_fp] != -1) {
 			//不需要写操作
-			UPDATE_NEW_PAGE_MAPPING(ssd, lpn, new_fp, finger_print[new_fp]);
+			new_ppn = finger_print[new_fp];
+			UPDATE_NEW_PAGE_MAPPING(ssd, lpn, new_fp, new_ppn);
 		}
 		else {
 			ret = GET_NEW_PAGE(ssd, user, VICTIM_OVERALL, EMPTY_TABLE_ENTRY_NB, &new_ppn);
@@ -603,10 +625,19 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 			}
 
 			UPDATE_NEW_PAGE_MAPPING(ssd, lpn, new_fp, new_ppn);
-			
+			// ppn_user = CAL_USER_BY_PPN(new_ppn);
 			write_page_nb++;
 		}
-		
+		ppn_user = CAL_USER_BY_PPN(ssd, new_ppn);
+		if (ppn_user != user) {	//旧页不在这个用户的物理页上
+			ssd->user[user].not_in_user_lpn ++;
+			ssd->user[ppn_user].other_page_write++;
+		}
+		else {
+			ssd->user[user].in_user_lpn ++;
+			ssd->user[user].self_page_write++;
+		}
+		UPDATE_PPN_BELONGINGS(ssd, user, lpn, VALID);
 		lba += write_sects;
 		remain -= write_sects;
 		left_skip = 0;
@@ -852,6 +883,28 @@ int CAL_USER_BY_LPN(struct ssdstate *ssd, int64_t lpn) {
 	return res;
 }
 
+int CAL_USER_BY_PPN(struct ssdstate *ssd, int64_t ppn) {
+	struct ssdconf *sc = &(ssd->ssdparams);
+	int res = -1;
+	int user_num = ssd->user_num;
+	struct USER_INFO *user_head = ssd->user;
+	int FLASH_PER_CHANNEL = sc->FLASH_NB / sc->CHANNEL_NB;
+
+	int flash_nb = CALC_FLASH(ssd, ppn);
+	int channel_nb = flash_nb / FLASH_PER_CHANNEL;
+
+	for (int i=0; i < user_num; i++) {
+		if (channel_nb >= user_head->started_channel && channel_nb < user_head->ended_channel) {
+			res = i;
+			break;
+		}
+		user_head ++;
+	}
+
+	if(res == -1) myPanic(__FUNCTION__, "Cannot find the user");
+	return res;
+}
+
 void CAL_NEXT_MAPPING_INDEX(struct ssdstate *ssd, struct USER_INFO *user_head) {
 	struct ssdconf *sc = &(ssd->ssdparams);
 	int mapping_index = user_head->next_mapping_index;
@@ -1026,4 +1079,3 @@ int64_t FP_GENERATOR(struct ssdstate *ssd, int64_t lpn){
 
 	return fp;
 }
-

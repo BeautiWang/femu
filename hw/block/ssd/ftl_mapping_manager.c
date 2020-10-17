@@ -117,6 +117,7 @@ int UPDATE_OLD_PAGE_MAPPING(struct ssdstate *ssd, int64_t lpn)
 
 	if(old_ppn == -1) {
 		myPanic(__FUNCTION__, "old_ppn == -1?");
+		exit(0);
 	}
 
 #endif
@@ -127,8 +128,15 @@ int UPDATE_OLD_PAGE_MAPPING(struct ssdstate *ssd, int64_t lpn)
 	if (valid_array[CALC_PAGE(ssd, old_ppn)] == 0) {
 		UPDATE_INVERSE_MAPPING(ssd, old_ppn, -1);
 		finger_print[old_fp] = -1;
+#ifdef DEBUG
+		int temp = 0;
+		for (int i = 0; i < ssd->user_num; i++ ) {
+			temp += ssd->page_belongings[old_ppn][i];
+		}
+		assert(temp == 0);
+#endif //DEBUG
 	}
-
+	
 	return SUCCESS;
 }
 

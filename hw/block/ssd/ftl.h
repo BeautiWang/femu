@@ -58,9 +58,11 @@ struct USER_INFO {
     int32_t invalid_page_num;
     
     /* Deduplication Statistic */   
+    int64_t in_user_lpn;
+    int64_t not_in_user_lpn;
     int64_t self_page_read;
-    int64_t other_page_read;
     int64_t self_page_write;
+    int64_t other_page_read;
     int64_t other_page_write;
     int64_t gc_page_read;
     int64_t gc_page_write;
