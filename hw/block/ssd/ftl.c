@@ -579,6 +579,7 @@ int64_t _FTL_WRITE(struct ssdstate *ssd, int64_t sector_nb, unsigned int length)
 		}
 		else {
 			ssd->unique_lpn_nb ++;
+			ssd->user[user].unique_lpn_nb ++;
 		}
 		if (finger_print[new_fp] != -1) {
 			//不需要写操作
@@ -668,7 +669,23 @@ void FPRINT_MOTIVATION(struct ssdstate *ssd) {
 	if (fp_motivation == NULL) {
 		myPanic(__FUNCTION__, "Outputfile open error!");
 	}
-	fprintf(fp_motivation, "unique_lpn_nb = %d, unique_ppn_nb = %d, ppn_validstate_sum = %d\n", ssd->unique_lpn_nb, ssd->unique_ppn_nb, ssd->ppn_valid_state_sum);
+	int user_num = ssd->user_num;
+	for (int i = 0; i < user_num; ++i) {
+		fprintf(fp_motivation, "%d, %ld, %ld, %ld, %ld, %ld, %ld, %ld, %ld, %ld, %ld\n", 
+			i,
+			ssd->user[i].unique_lpn_nb,
+			ssd->user[i].unique_ppn_nb,
+			ssd->user[i].in_user_lpn,
+			ssd->user[i].not_in_user_lpn,
+			ssd->user[i].self_page_read,
+			ssd->user[i].self_page_write,
+			ssd->user[i].other_page_read,
+			ssd->user[i].other_page_write,
+			ssd->user[i].gc_page_read,
+			ssd->user[i].gc_page_write
+		);
+	}
+	
 	fclose(fp_motivation);
 	fp_motivation = NULL;
 }
@@ -800,6 +817,8 @@ void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd) {
 	if (fp_motivation == NULL) {
 		myPanic(__FUNCTION__, "Output file open error!");
 	}
+	fprintf(fp_motivation, "user, unique_lpn_nb, unique_ppn_nb, in_user_lpn, not_in_user_lpn, self_page_read, self_page_write, \\
+		other_page_read, other_page_write, gc_page_read, gc_page_write\n");
 	fclose(fp_motivation);
 	fp_motivation = NULL;
 #endif
@@ -1028,7 +1047,7 @@ void INIT_zipf_AND_fingerprint(struct ssdstate *ssd)
 
 #ifdef DUPLICATION
 	int fp_size = UNIQUE_PAGE_NB;
-#elif
+#else
 	int fp_size = sc->PAGE_MAPPING_ENTRY_NB;
 #endif
 
@@ -1071,7 +1090,7 @@ int64_t FP_GENERATOR(struct ssdstate *ssd, int64_t lpn){
 			low = mid;
 		}
 	}
-#elif //DUPLICATION
+#else //DUPLICATION
 	fp = lpn;
 #endif //DUPLICATION
 

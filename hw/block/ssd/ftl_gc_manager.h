@@ -19,4 +19,6 @@ void GC_CHECK(struct ssdstate *ssd, int user, unsigned int phy_flash_nb, unsigne
 int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip, int user);
 int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_nb, unsigned int* phy_block_nb, int user);
 
+int GET_MIGRATION_USER(struct ssdstate *ssd, int user, int64_t ppn);
+
 #endif

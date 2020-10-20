@@ -815,6 +815,9 @@ int UPDATE_BLOCK_STATE_ENTRY(struct ssdstate *ssd, unsigned int phy_flash_nb, un
 		return FAIL;
 	}
 
+	int64_t ppn = phy_flash_nb * sc->PAGES_PER_FLASH + phy_block_nb * sc->PAGE_NB + phy_page_nb;
+	int ppn_user = CAL_USER_BY_PPN(ssd, ppn);
+
 	int i;
 	int valid_count = 0;
 	block_state_entry* b_s_entry = GET_BLOCK_STATE_ENTRY(ssd, phy_flash_nb, phy_block_nb);
@@ -829,6 +832,7 @@ int UPDATE_BLOCK_STATE_ENTRY(struct ssdstate *ssd, unsigned int phy_flash_nb, un
 		else if (valid_array[phy_page_nb] == -1) {
 			valid_array[phy_page_nb] = 1;
 			ssd->unique_ppn_nb ++;
+			ssd->user[ppn_user].unique_ppn_nb ++;
 		}
 		else {
 			valid_array[phy_page_nb] += 1;
@@ -839,6 +843,7 @@ int UPDATE_BLOCK_STATE_ENTRY(struct ssdstate *ssd, unsigned int phy_flash_nb, un
 		valid_array[phy_page_nb] -= 1;
 		if (valid_array[phy_page_nb] == 0) {
 			ssd->unique_ppn_nb --;
+			ssd->user[ppn_user].unique_ppn_nb --;
 		}
 	}
 	else if(valid == 0){

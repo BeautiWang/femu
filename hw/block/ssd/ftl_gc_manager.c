@@ -135,9 +135,13 @@ int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip, int user)
 
 	int64_t victim_block_base_ppn = victim_phy_flash_nb * PAGES_PER_FLASH + victim_phy_block_nb*PAGE_NB;
 
+	int victim_ppn_user = CAL_USER_BY_PPN(ssd, victim_block_base_ppn);
+	int new_ppn_user = -1;
+
 	for (int i = 0; i < PAGE_NB; i++) {
 		if (valid_array[i] > 0) {
-			ret = GET_NEW_PAGE(ssd, user, VICTIM_OVERALL, EMPTY_TABLE_ENTRY_NB, &new_ppn);
+			int res = GET_MIGRATION_USER(ssd, user, victim_block_base_ppn + i);
+			ret = GET_NEW_PAGE(ssd, res, VICTIM_OVERALL, EMPTY_TABLE_ENTRY_NB, &new_ppn);
 			if(ret == FAIL){
 				printf("ERROR[%s] Get new page fail\n", __FUNCTION__);
 				return FAIL;
@@ -146,13 +150,16 @@ int GARBAGE_COLLECTION(struct ssdstate *ssd, int chip, int user)
 			/* Read a Valid Page from the Victim NAND Block */
 			n_io_info = CREATE_NAND_IO_INFO(ssd, i, GC_READ, -1, ssd->io_request_seq_nb);
 			SSD_PAGE_READ(ssd, victim_phy_flash_nb, victim_phy_block_nb, i, n_io_info);
-
+			ssd->user[victim_ppn_user].gc_page_read ++;
 			/* Write the Valid Page*/
 			n_io_info = CREATE_NAND_IO_INFO(ssd, i, GC_WRITE, -1, ssd->io_request_seq_nb);
 			SSD_PAGE_WRITE(ssd, CALC_FLASH(ssd, new_ppn), CALC_BLOCK(ssd, new_ppn), CALC_PAGE(ssd, new_ppn), n_io_info);
-
-			//old_ppn =  victim_block_base_ppn  + i;
-            old_ppn = victim_phy_flash_nb*sc->PAGES_PER_FLASH + victim_phy_block_nb*sc->PAGE_NB + i;
+			new_ppn_user = CAL_USER_BY_PPN(ssd, new_ppn);
+#ifdef DEBUG
+			assert(new_ppn_user == res);
+#endif
+			ssd->user[new_ppn_user].gc_page_write ++;
+			old_ppn =  victim_block_base_ppn  + i;
 
 //			lpn = inverse_page_mapping_table[old_ppn];
 #ifdef FTL_MAP_CACHE
@@ -369,4 +376,26 @@ int SELECT_VICTIM_BLOCK(struct ssdstate *ssd, int chip, unsigned int* phy_flash_
 	EJECT_VICTIM_BLOCK(ssd, victim_block);
 
 	return SUCCESS;
+}
+
+int GET_MIGRATION_USER(struct ssdstate *ssd, int user, int64_t ppn) {
+	int dst_user = -1;
+	
+	if (ssd->page_belongings[ppn][user] != 0) {
+		dst_user = user;
+	}
+	else {
+		for (int i = 0; i < ssd->user_num; ++i) {
+			if (ssd->page_belongings[ppn][i] != 0) {
+				dst_user = i;
+				break;
+			}
+		}
+	}
+	
+	if(dst_user == -1) {
+		assert(dst_user != -1);
+	}
+
+	return dst_user;
 }

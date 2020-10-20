@@ -25,10 +25,11 @@
 #define USER_CHANNEL_ARRAY {4, 4}
 //USER CAP(GB)
 #define USER_CAPACITY_ARRAY {4, 4}
-#define UNIQUE_PAGE_NB 2097152
+//#define UNIQUE_PAGE_NB 1887436
+//#define UNIQUE_PAGE_NB 2097152
 #define PRINT1 1
 
-#define DUPLICATION
+//#define DUPLICATION
 
 //extern int GC_MODE;
 //extern int64_t *gc_slot;

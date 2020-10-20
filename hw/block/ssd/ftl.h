@@ -66,6 +66,8 @@ struct USER_INFO {
     int64_t other_page_write;
     int64_t gc_page_read;
     int64_t gc_page_write;
+    int64_t unique_lpn_nb;
+    int64_t unique_ppn_nb;
 
     /* Average IO Time */
     double avg_write_delay;
@@ -145,6 +147,7 @@ int32_t sum(const int array[]);
 void INIT_MULTITENANT_CONFIG(struct ssdstate *ssd);
 int CAL_USER_BY_CHANNEL(struct ssdstate *ssd, int channel);
 int CAL_USER_BY_LPN(struct ssdstate *ssd, int64_t lpn);
+int CAL_USER_BY_PPN(struct ssdstate *ssd, int64_t ppn);
 void CAL_NEXT_MAPPING_INDEX(struct ssdstate *ssd, struct USER_INFO *user_head);
 
 /* Deduplication */
