@@ -7,6 +7,7 @@
 #define INVALID_PPA     (~(0ULL))
 #define INVALID_LPN     (~(0ULL))
 #define UNMAPPED_PPA    (~(0ULL))
+#define UNMAPPED_FINGERPRINT     (~(0ULL))
 
 enum {
     NAND_READ =  0,
@@ -63,6 +64,7 @@ struct nand_page {
     nand_sec_status_t *sec;
     int nsecs;
     int status;
+    int rc;         //reference count.
 };
 
 struct nand_block {
@@ -150,7 +152,7 @@ typedef struct line {
     int vpc; /* valid page count in this line */
     QTAILQ_ENTRY(line) entry; /* in either {free,victim,full} list */
     /* position in the priority queue for victim lines */
-    size_t                  pos;
+    size_t pos;
 } line;
 
 /* wp: record next write addr */
@@ -186,8 +188,10 @@ struct ssd {
     char *ssdname;
     struct ssdparams sp;
     struct ssd_channel *ch;
-    struct ppa *maptbl; /* page level mapping table */
-    uint64_t *rmap;     /* reverse mapptbl, assume it's stored in OOB */
+    double *Pzipf;             /* Pzipf array, for dedup */
+    uint64_t *maptbl_lpn_fp;   /* page level mapping table, lpn->fp */
+    struct ppa *maptbl_fp_ppa; /* page level mapping table2, fp->ppa */
+    uint64_t *rmap;     /* reverse mapptbl, assume it's stored in OOB , ppa->fp*/
     struct write_pointer wp;
     struct line_mgmt lm;
 

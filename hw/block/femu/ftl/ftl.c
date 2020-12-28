@@ -4,6 +4,10 @@
 #include "hw/pci/msi.h"
 #include "../nvme.h"
 #include "ftl.h"
+#include "math.h"
+
+#define UNIQUE_RATIO (1.0)
+#define DBG 1
 
 static void *ftl_thread(void *arg);
 
@@ -18,15 +22,57 @@ static inline bool should_gc_high(struct ssd *ssd)
     return (ssd->lm.free_line_cnt <= ssd->sp.gc_thres_lines_high);
 }
 
-static inline struct ppa get_maptbl_ent(struct ssd *ssd, uint64_t lpn)
-{
-    return ssd->maptbl[lpn];
+static inline uint64_t generate_fingerprint(struct ssd *ssd, uint64_t lpn) {
+    uint64_t fp = UNMAPPED_FINGERPRINT;
+
+    struct ssdparams *spp = &ssd->sp;
+
+    double data = ((double)rand() + 1) / ((double)RAND_MAX + 2);
+	uint64_t low = 0, mid;
+    uint64_t high = (uint64_t)(spp->tt_pgs * UNIQUE_RATIO);
+	while (low < high) {
+        //printf("low = %lu, high = %lu\n", low, high);
+		mid = low + ((high - low + 1)) / 2;
+
+		if (data <= ssd->Pzipf[mid]) {
+			if (data > ssd->Pzipf[mid - 1]) {
+				fp = mid;
+				break;
+			}
+			high = mid - 1;
+		}
+		else {
+			low = mid;
+		}
+	}
+
+#if DBG
+    assert(fp != UNMAPPED_FINGERPRINT);
+    assert(fp < ssd->sp.tt_pgs*UNIQUE_RATIO);
+#endif  //DBG
+
+    return fp;
 }
 
-static inline void set_maptbl_ent(struct ssd *ssd, uint64_t lpn, struct ppa *ppa)
+static inline uint64_t get_fingerprint(struct ssd *ssd, uint64_t lpn) 
 {
+    return ssd->maptbl_lpn_fp[lpn];
+}
+
+static inline struct ppa get_maptbl_ent(struct ssd *ssd, uint64_t fingerprint)
+{
+    return ssd->maptbl_fp_ppa[fingerprint];
+}
+
+static inline void set_fingerprint(struct ssd *ssd, uint64_t lpn, uint64_t fingerprint) {
     assert(lpn < ssd->sp.tt_pgs);
-    ssd->maptbl[lpn] = *ppa;
+    assert(fingerprint <= ssd->sp.tt_pgs * UNIQUE_RATIO);
+    ssd->maptbl_lpn_fp[lpn] = fingerprint;
+}
+
+static inline void set_maptbl_ent(struct ssd *ssd, uint64_t fingerprint, struct ppa *ppa)
+{
+    ssd->maptbl_fp_ppa[fingerprint].ppa = ppa ? ppa->ppa : UNMAPPED_PPA;
 }
 
 static uint64_t ppa2pgidx(struct ssd *ssd, struct ppa *ppa)
@@ -49,12 +95,14 @@ static inline uint64_t get_rmap_ent(struct ssd *ssd, struct ppa *ppa)
     return ssd->rmap[pgidx];
 }
 
-/* set rmap[page_no(ppa)] -> lpn */
-static inline void set_rmap_ent(struct ssd *ssd, uint64_t lpn, struct ppa *ppa)
+/* set rmap[page_no(ppa)] -> fingerprint */
+static inline void set_rmap_ent(struct ssd *ssd, uint64_t fingerprint, struct ppa *ppa)
 {
     uint64_t pgidx = ppa2pgidx(ssd, ppa);
-
-    ssd->rmap[pgidx] = lpn;
+#if DBG
+    assert(pgidx<ssd->sp.tt_pgs);
+#endif
+    ssd->rmap[pgidx] = fingerprint;
 }
 
 static int victim_line_cmp_pri(pqueue_pri_t next, pqueue_pri_t curr)
@@ -243,7 +291,8 @@ static void ssd_init_params(struct ssdparams *spp)
     spp->secsz = 512;
     spp->secs_per_pg = 8;
     spp->pgs_per_blk = 256;
-    spp->blks_per_pl = 256; /* 16GB */
+    // spp->blks_per_pl = 256; /* 16GB */
+    spp->blks_per_pl = 80; /* 5GB */
     spp->pls_per_lun = 1;
     spp->luns_per_ch = 8;
     spp->nchs = 8;
@@ -300,6 +349,7 @@ static void ssd_init_nand_page(struct nand_page *pg, struct ssdparams *spp)
         pg->sec[i] = SEC_FREE;
     }
     pg->status = PG_FREE;
+    pg->rc = 0;
 }
 
 static void ssd_init_nand_blk(struct nand_block *blk, struct ssdparams *spp)
@@ -351,17 +401,46 @@ static void ssd_init_ch(struct ssd_channel *ch, struct ssdparams *spp)
         ssd_init_nand_lun(&ch->lun[i], spp);
     }
     ch->next_ch_avail_time = 0;
-    ch->busy = 0;
+    ch->busy = false;
 }
 
-static void ssd_init_maptbl(struct ssd *ssd)
+static void ssd_init_pzipf(struct ssd *ssd) {
+    int i;
+	double a=0.2, sum = 0.0;
+    struct ssdparams *spp = &ssd->sp;
+
+    int unique_pg_nb = (int)((spp->tt_pgs * UNIQUE_RATIO)) + 1;
+
+    ssd->Pzipf = g_malloc0(sizeof(double) * unique_pg_nb);
+
+    for (i=1; i<=unique_pg_nb; ++i) {
+        sum+=1/pow((double)i, a);
+    }
+
+    ssd->Pzipf[0] = 0.0;
+    for (i=1; i<=unique_pg_nb; ++i) {
+        ssd->Pzipf[i]=ssd->Pzipf[i-1]+1/pow((double)i, a)/sum;
+    }
+}
+
+static void ssd_init_maptbl_lpn_fp(struct ssd *ssd)
 {
     int i;
     struct ssdparams *spp = &ssd->sp;
 
-    ssd->maptbl = g_malloc0(sizeof(struct ppa) * spp->tt_pgs);
+    ssd->maptbl_lpn_fp = g_malloc0(sizeof(uint64_t) * spp->tt_pgs);
     for (i = 0; i < spp->tt_pgs; i++) {
-        ssd->maptbl[i].ppa = UNMAPPED_PPA;
+        ssd->maptbl_lpn_fp[i] = UNMAPPED_FINGERPRINT;
+    }
+}
+
+static void ssd_init_maptbl_fp_ppa(struct ssd *ssd) {
+    int i;
+    struct ssdparams *spp = &ssd->sp;
+
+    ssd->maptbl_fp_ppa = g_malloc0(sizeof(struct ppa) * spp->tt_pgs);
+    for (i = 0; i < spp->tt_pgs; i++) {
+        ssd->maptbl_fp_ppa[i].ppa = UNMAPPED_PPA;
     }
 }
 
@@ -371,7 +450,7 @@ static void ssd_init_rmap(struct ssd *ssd)
     struct ssdparams *spp = &ssd->sp;
     ssd->rmap = g_malloc0(sizeof(uint64_t) * spp->tt_pgs);
     for (i = 0; i < spp->tt_pgs; i++) {
-        ssd->rmap[i] = INVALID_LPN;
+        ssd->rmap[i] = UNMAPPED_FINGERPRINT;
     }
 }
 
@@ -391,8 +470,12 @@ void ssd_init(FemuCtrl *n)
         ssd_init_ch(&ssd->ch[i], spp);
     }
 
+    /* initialize Pzipf */
+    ssd_init_pzipf(ssd);
+
     /* initialize maptbl */
-    ssd_init_maptbl(ssd);
+    ssd_init_maptbl_lpn_fp(ssd);
+    ssd_init_maptbl_fp_ppa(ssd);
 
     /* initialize rmap */
     ssd_init_rmap(ssd);
@@ -428,6 +511,10 @@ static inline bool valid_ppa(struct ssd *ssd, struct ppa *ppa)
 static inline bool valid_lpn(struct ssd *ssd, uint64_t lpn)
 {
     return (lpn < ssd->sp.tt_pgs);
+}
+
+static inline bool valid_fingerprint(struct ssd *ssd, uint64_t fingerprint) {
+    return (fingerprint < ssd->sp.tt_pgs*UNIQUE_RATIO);
 }
 
 static inline bool mapped_ppa(struct ppa *ppa)
@@ -543,8 +630,7 @@ static uint64_t ssd_advance_status(struct ssd *ssd, struct ppa *ppa,
 }
 
 /* update SSD status about one page from PG_VALID -> PG_VALID */
-static void mark_page_invalid(struct ssd *ssd, struct ppa *ppa)
-{
+static bool mark_page_invalid(struct ssd *ssd, struct ppa *ppa) {
     struct line_mgmt *lm = &ssd->lm;
     struct ssdparams *spp = &ssd->sp;
     struct nand_block *blk = NULL;
@@ -552,40 +638,61 @@ static void mark_page_invalid(struct ssd *ssd, struct ppa *ppa)
     bool was_full_line = false;
     struct line *line;
 
+    /* 考虑重删的情况,需要进行引用计数的更改 */
     /* update corresponding page status */
     pg = get_pg(ssd, ppa);
     assert(pg->status == PG_VALID);
-    pg->status = PG_INVALID;
+    assert(pg->rc > 0);
 
-    /* update corresponding block status */
-    blk = get_blk(ssd, ppa);
-    assert(blk->ipc >= 0 && blk->ipc < spp->pgs_per_blk);
-    blk->ipc++;
-    assert(blk->vpc > 0 && blk->vpc <= spp->pgs_per_blk);
-    blk->vpc--;
+    pg->rc--;
+    if (pg->rc == 0) {
+        pg->status = PG_INVALID;
+        /* update corresponding block status */
+        blk = get_blk(ssd, ppa);
+        assert(blk->ipc >= 0 && blk->ipc < spp->pgs_per_blk);
+        blk->ipc++;
+        assert(blk->vpc > 0 && blk->vpc <= spp->pgs_per_blk);
+        blk->vpc--;
 
-    /* update corresponding line status */
-    line = get_line(ssd, ppa);
-    assert(line->ipc >= 0 && line->ipc < spp->pgs_per_line);
-    if (line->vpc == spp->pgs_per_line) {
-        assert(line->ipc == 0);
-        was_full_line = true;
-    }
-    line->ipc++;
-    assert(line->vpc > 0 && line->vpc <= spp->pgs_per_line);
-    line->vpc--;
-    if (was_full_line) {
-        /* move line: "full" -> "victim" */
-        QTAILQ_REMOVE(&lm->full_line_list, line, entry);
-        lm->full_line_cnt--;
-        pqueue_insert(lm->victim_line_pq, line);
-        //QTAILQ_INSERT_TAIL(&lm->victim_line_list, line, entry);
-        lm->victim_line_cnt++;
-    }
+        /* update corresponding line status */
+        line = get_line(ssd, ppa);
+        assert(line->ipc >= 0 && line->ipc < spp->pgs_per_line);
+        if (line->vpc == spp->pgs_per_line) {
+            assert(line->ipc == 0);
+            was_full_line = true;
+        }
+        line->ipc++;
+        assert(line->vpc > 0 && line->vpc <= spp->pgs_per_line);
+        line->vpc--;
+
+        if (was_full_line) {
+            /* move line: "full" -> "victim" */
+            QTAILQ_REMOVE(&lm->full_line_list, line, entry);
+            lm->full_line_cnt--;
+            pqueue_insert(lm->victim_line_pq, line);
+            //QTAILQ_INSERT_TAIL(&lm->victim_line_list, line, entry);
+            lm->victim_line_cnt++;
+        }
+        return true;
+    }   
+    return false;
+}
+
+/* Increase reference count of dup page */
+static void increase_pgrc(struct ssd *ssd, struct ppa *ppa) {
+    struct ssdparams *spp = &ssd->sp;
+    struct nand_page *pg = NULL;
+
+    /* update page status */
+    pg = get_pg(ssd, ppa);
+    assert(pg->status == PG_VALID);
+    assert(pg->rc > 0);
+    pg->rc ++;
 }
 
 /* update SSD status about one page from PG_FREE -> PG_VALID */
-static void mark_page_valid(struct ssd *ssd, struct ppa *ppa)
+/* And for gc, assignment the refernce count. */
+static void mark_page_valid(struct ssd *ssd, struct ppa *ppa, struct ppa *old_ppa)
 {
     struct ssdparams *spp = &ssd->sp;
     struct nand_block *blk = NULL;
@@ -595,8 +702,27 @@ static void mark_page_valid(struct ssd *ssd, struct ppa *ppa)
     /* update page status */
     pg = get_pg(ssd, ppa);
     assert(pg->status == PG_FREE);
-    pg->status = PG_VALID;
+    assert(pg->rc == 0);
 
+    /* for gc write. */
+    if (old_ppa)
+    {
+        assert(old_ppa != NULL);
+        struct nand_page *old_pg = get_pg(ssd, old_ppa);
+        assert(old_pg->status == PG_VALID && old_pg->rc > 0);
+
+        /* update page status */
+        pg->status = PG_VALID;
+        pg->rc = old_pg->rc;
+    }
+    /* for user write */
+    else 
+    {
+        assert(old_ppa == NULL);
+        pg->status = PG_VALID;
+        pg->rc = 1;
+    }
+    
     /* update corresponding block status */
     blk = get_blk(ssd, ppa);
     assert(blk->vpc >= 0 && blk->vpc < spp->pgs_per_blk);
@@ -649,19 +775,20 @@ static uint64_t gc_write_page(struct ssd *ssd, struct ppa *old_ppa)
     struct ppa new_ppa;
     //struct ssd_channel *new_ch;
     struct nand_lun *new_lun;
-    uint64_t lpn = get_rmap_ent(ssd, old_ppa);
+    uint64_t fp = get_rmap_ent(ssd, old_ppa);
+
     /* first read out current mapping info */
     //set_rmap(ssd, lpn, new_ppa);
 
-    assert(valid_lpn(ssd, lpn));
     new_ppa = get_new_page(ssd);
+
     /* update maptbl */
-    set_maptbl_ent(ssd, lpn, &new_ppa);
+    set_maptbl_ent(ssd, fp, &new_ppa);
     /* update rmap */
-    set_rmap_ent(ssd, lpn, &new_ppa);
+    set_rmap_ent(ssd, fp, &new_ppa);
 
     //mark_page_invalid(ssd, old_ppa);
-    mark_page_valid(ssd, &new_ppa);
+    mark_page_valid(ssd, &new_ppa, old_ppa);
 
     /* need to advance the write pointer here */
     ssd_advance_write_pointer(ssd);
@@ -740,6 +867,7 @@ static void clean_one_block(struct ssd *ssd, struct ppa *ppa)
         /* there shouldn't be any free page in victim blocks */
         assert(pg_iter->status != PG_FREE);
         if (pg_iter->status == PG_VALID) {
+            assert(pg_iter->rc > 0);
             gc_read_page(ssd, ppa);
             /* delay the maptbl update until "write" happens */
             gc_write_page(ssd, ppa);
@@ -881,7 +1009,7 @@ uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
     struct ppa ppa;
     uint64_t start_lpn = lba / spp->secs_per_pg;
     uint64_t end_lpn = (lba + nsecs) / spp->secs_per_pg;
-    uint64_t lpn;
+    uint64_t lpn, fp;
     uint64_t sublat, maxlat = 0;
     //struct ssd_channel *ch;
     struct nand_lun *lun;
@@ -898,6 +1026,7 @@ uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
     req->gcrt = 0;
 #define NVME_CMD_GCT (911)
     if (req->tifa_cmd_flag == NVME_CMD_GCT) {
+        assert(0);  //暂时应该用不到这个
         /* fastfail IO path */
         for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
             ppa = get_maptbl_ent(ssd, lpn);
@@ -941,7 +1070,8 @@ uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
     } else {
         /* normal IO read path */
         for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
-            ppa = get_maptbl_ent(ssd, lpn);
+            fp = get_fingerprint(ssd, lpn);
+            ppa = get_maptbl_ent(ssd, fp);
             if (!mapped_ppa(&ppa) || !valid_ppa(ssd, &ppa)) {
                 //printf("%s,lpn(%" PRId64 ") not mapped to valid ppa\n", ssd->ssdname, lpn);
                 //printf("Invalid ppa,ch:%d,lun:%d,blk:%d,pl:%d,pg:%d,sec:%d\n",
@@ -971,62 +1101,74 @@ uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     uint64_t start_lpn = lba / spp->secs_per_pg;
     uint64_t end_lpn = (lba + len - 1) / spp->secs_per_pg;
     struct ppa ppa;
-    uint64_t lpn;
+    uint64_t lpn, fp;
     uint64_t curlat = 0, maxlat = 0;
     int r;
     /* TODO: writes need to go to cache first */
     /* ... */
 
-    if (end_lpn >= spp->tt_pgs) {
-        printf("ERRRRRRRRRR,start_lpn=%"PRIu64",end_lpn=%"PRIu64",tt_pgs=%d\n", start_lpn, end_lpn, ssd->sp.tt_pgs);
-    }
-    //assert(end_lpn < spp->tt_pgs);
-    //printf("Coperd,%s,end_lpn=%"PRIu64" (%d),len=%d\n", __func__, end_lpn, spp->tt_pgs, len);
+    // 用来保证请求的页号不会超过ssd的最大页号
+    assert(end_lpn < spp->tt_pgs);
 
     while (should_gc_high(ssd)) {
         /* perform GC here until !should_gc(ssd) */
         r = do_gc(ssd, true);
         if (r == -1)
             break;
-        //break;
     }
 
     /* on cache eviction, write to NAND page */
 
     // are we doing fresh writes ? maptbl[lpn] == FREE, pick a new page
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
-        ppa = get_maptbl_ent(ssd, lpn);
-        if (mapped_ppa(&ppa)) {
-            /* overwrite */
-            /* update old page information first */
-            //printf("Coperd,before-overwrite,line[%d],ipc=%d,vpc=%d\n", ppa.g.blk, get_line(ssd, &ppa)->ipc, get_line(ssd, &ppa)->vpc);
-            mark_page_invalid(ssd, &ppa);
-            //printf("Coperd,after-overwrite,line[%d],ipc=%d,vpc=%d\n", ppa.g.blk, get_line(ssd, &ppa)->ipc, get_line(ssd, &ppa)->vpc);
-            set_rmap_ent(ssd, INVALID_LPN, &ppa);
+        /* 首先处理旧的指纹 */
+        fp = get_fingerprint(ssd, lpn);/* 指纹已经存在 */
+        if (fp != UNMAPPED_FINGERPRINT)
+        {
+            /* 这个数据一定不是第一次写了, 因此必然对应一个有效的物理页 */
+            ppa = get_maptbl_ent(ssd, fp);
+            assert(ppa.ppa != UNMAPPED_PPA);
+
+            /* 减少一次索引,如果之后该PPA已经无效,更新二级映射和反向映射 */
+            if (mark_page_invalid(ssd, &ppa)) {
+                set_maptbl_ent(ssd, fp, NULL);
+                set_rmap_ent(ssd, UNMAPPED_FINGERPRINT, &ppa);
+            }
         }
+        
+        /* 进行写入或者建立索引 */
+        fp = generate_fingerprint(ssd, lpn);
+        ppa = get_maptbl_ent(ssd, fp);
+        
+        /* 已经存在这个映射,只需要增加新的映射, 不需要真实的写 */
+        if (mapped_ppa(&ppa)) {
+            set_fingerprint(ssd, lpn, fp);
+            increase_pgrc(ssd, &ppa);
+        }
+        else {
+            /* find a new page */
+            ppa = get_new_page(ssd);
 
-        /* new write */
-        /* find a new page */
-        ppa = get_new_page(ssd);
-        /* update maptbl */
-        set_maptbl_ent(ssd, lpn, &ppa);
-        /* update rmap */
-        set_rmap_ent(ssd, lpn, &ppa);
+            /* update lpn->fingerprint */
+            set_fingerprint(ssd, lpn, fp);
+            /* update fp->ppa */
+            set_maptbl_ent(ssd, fp, &ppa);
+            /* update ppa->fp */
+            set_rmap_ent(ssd, fp, &ppa); 
 
-        mark_page_valid(ssd, &ppa);
+            mark_page_valid(ssd, &ppa, NULL);
 
-        /* need to advance the write pointer here */
-        ssd_advance_write_pointer(ssd);
+            /* need to advance the write pointer here */
+            ssd_advance_write_pointer(ssd);
 
-        struct nand_cmd swr;
-        swr.type = USER_IO;
-        swr.cmd = NAND_WRITE;
-        swr.stime = req->stime;
-        /* get latency statistics */
-        curlat = ssd_advance_status(ssd, &ppa, &swr);
-        maxlat = (curlat > maxlat) ? curlat : maxlat;
+            struct nand_cmd swr;
+            swr.type = USER_IO;
+            swr.cmd = NAND_WRITE;
+            swr.stime = req->stime;
+            /* get latency statistics */
+            curlat = ssd_advance_status(ssd, &ppa, &swr);
+            maxlat = (curlat > maxlat) ? curlat : maxlat;
+        }
     }
-
     return maxlat;
 }
-

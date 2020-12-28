@@ -1,0 +1,23 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "femu",
+            "type": "cppdbg",
+            "request": "launch",
+            
+            "program": "/home/nvm/femu/build-femu/x86_64-softmmu/qemu-system-x86_64",
+            "args": ["-name", "\"FEMU-blackbox-SSD\"", "-enable-kvm", "-cpu", "host", "-smp", "4", "-m", "4G", "-device", "virtio-scsi-pci,id=scsi0", "-device", "scsi-hd,drive=hd0", "-drive", "file=~/images/u14s.qcow2,if=none,aio=native,cache=none,format=qcow2,id=hd0", "-drive", "file=~/images/vssd1.raw,if=none,aio=threads,format=raw,id=id0", "-device", "nvme,femu_mode=1,drive=id0,serial=serial0,id=nvme0", "-net", "user,hostfwd=tcp::8080-:22", "-net", "nic,model=virtio", "-nographic", "-qmp", "unix:./qmp-sock,server,nowait"],
+            "stopAtEntry": false,  // 设为true时程序将暂停在程序入口处， false时停在断点处
+
+            //"cwd": "${workspaceFolder}", // 调试程序时的工作目录
+            "cwd" : "/home/nvm/femu/build-femu/", 
+            "environment": [],
+            
+            "MIMode": "gdb",
+        }
+    ]
+}
