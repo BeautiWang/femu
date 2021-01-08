@@ -202,5 +202,8 @@ struct ssd {
     QemuThread ftl_thread;
 };
 
+struct user {
+    
+};
 
 #endif

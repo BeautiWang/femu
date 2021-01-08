@@ -9,6 +9,8 @@
         "type_traits": "cpp",
         "utility": "cpp",
         "string": "c",
-        "string_view": "c"
-    }
+        "string_view": "c",
+        "*.tcc": "cpp"
+    },
+    "cmake.configureOnOpen": false
 }

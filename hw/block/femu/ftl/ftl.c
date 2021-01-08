@@ -48,7 +48,7 @@ static inline uint64_t generate_fingerprint(struct ssd *ssd, uint64_t lpn) {
 
 #if DBG
     assert(fp != UNMAPPED_FINGERPRINT);
-    assert(fp < ssd->sp.tt_pgs*UNIQUE_RATIO);
+    assert(fp <= ssd->sp.tt_pgs* UNIQUE_RATIO);
 #endif  //DBG
 
     return fp;
@@ -410,9 +410,9 @@ static void ssd_init_pzipf(struct ssd *ssd) {
 	double a=0.2, sum = 0.0;
     struct ssdparams *spp = &ssd->sp;
 
-    int unique_pg_nb = (int)((spp->tt_pgs * UNIQUE_RATIO)) + 1;
+    int unique_pg_nb = (int)((spp->tt_pgs * UNIQUE_RATIO));
 
-    ssd->Pzipf = g_malloc0(sizeof(double) * unique_pg_nb);
+    ssd->Pzipf = g_malloc0(sizeof(double) * unique_pg_nb + 1);
 
     for (i=1; i<=unique_pg_nb; ++i) {
         sum+=1/pow((double)i, a);
@@ -429,8 +429,8 @@ static void ssd_init_maptbl_lpn_fp(struct ssd *ssd)
     int i;
     struct ssdparams *spp = &ssd->sp;
 
-    ssd->maptbl_lpn_fp = g_malloc0(sizeof(uint64_t) * spp->tt_pgs);
-    for (i = 0; i < spp->tt_pgs; i++) {
+    ssd->maptbl_lpn_fp = g_malloc0(sizeof(uint64_t) * (spp->tt_pgs + 1));
+    for (i = 0; i <= spp->tt_pgs; i++) {
         ssd->maptbl_lpn_fp[i] = UNMAPPED_FINGERPRINT;
     }
 }
@@ -439,8 +439,8 @@ static void ssd_init_maptbl_fp_ppa(struct ssd *ssd) {
     int i;
     struct ssdparams *spp = &ssd->sp;
 
-    ssd->maptbl_fp_ppa = g_malloc0(sizeof(struct ppa) * spp->tt_pgs);
-    for (i = 0; i < spp->tt_pgs; i++) {
+    ssd->maptbl_fp_ppa = g_malloc0(sizeof(struct ppa) * (spp->tt_pgs + 1));
+    for (i = 0; i <= spp->tt_pgs; i++) {
         ssd->maptbl_fp_ppa[i].ppa = UNMAPPED_PPA;
     }
 }
@@ -642,6 +642,12 @@ static bool mark_page_invalid(struct ssd *ssd, struct ppa *ppa) {
     /* 考虑重删的情况,需要进行引用计数的更改 */
     /* update corresponding page status */
     pg = get_pg(ssd, ppa);
+#if DBG
+    if (pg->status != PG_VALID) {
+        printf("Error[%s]: pg->status = %d, pg->rc = %d\n", __FUNCTION__, pg->status, pg->rc);
+        fflush(stdin);
+    }
+#endif //DBG
     assert(pg->status == PG_VALID);
     assert(pg->rc > 0);
 
@@ -680,15 +686,24 @@ static bool mark_page_invalid(struct ssd *ssd, struct ppa *ppa) {
 }
 
 /* Increase reference count of dup page */
-static void increase_pgrc(struct ssd *ssd, struct ppa *ppa) {
+static int increase_pgrc(struct ssd *ssd, struct ppa *ppa) {
     struct ssdparams *spp = &ssd->sp;
     struct nand_page *pg = NULL;
 
     /* update page status */
     pg = get_pg(ssd, ppa);
+#if DBG
+    if (pg->status != PG_VALID) {
+        printf("ERROR[%s]: pg->status = %d\npg->rc = %d\n", __FUNCTION__, pg->status, pg->rc);
+        fflush(stdin);
+        return 1;
+    }
+    
+#endif  //DBG
     assert(pg->status == PG_VALID);
     assert(pg->rc > 0);
     pg->rc ++;
+    return 0;
 }
 
 /* update SSD status about one page from PG_FREE -> PG_VALID */
@@ -748,6 +763,7 @@ static void mark_block_free(struct ssd *ssd, struct ppa *ppa)
         pg = &blk->pg[i];
         assert(pg->nsecs == spp->secs_per_pg);
         pg->status = PG_FREE;
+        pg->rc = 0;
     }
 
     /* reset block status */
@@ -1101,8 +1117,8 @@ uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     int len = req->nlb;
     uint64_t start_lpn = lba / spp->secs_per_pg;
     uint64_t end_lpn = (lba + len - 1) / spp->secs_per_pg;
-    struct ppa ppa;
-    uint64_t lpn, fp;
+    struct ppa old_ppa, new_ppa;
+    uint64_t lpn, old_fp, new_fp;
     uint64_t curlat = 0, maxlat = 0;
     int r;
     /* TODO: writes need to go to cache first */
@@ -1123,41 +1139,47 @@ uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     // are we doing fresh writes ? maptbl[lpn] == FREE, pick a new page
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
         /* 首先处理旧的指纹 */
-        fp = get_fingerprint(ssd, lpn);/* 指纹已经存在 */
-        if (fp != UNMAPPED_FINGERPRINT)
+        old_fp = get_fingerprint(ssd, lpn);
+        new_fp = generate_fingerprint(ssd, lpn);
+        /* 指纹已经存在 */
+        if (old_fp != UNMAPPED_FINGERPRINT)
         {
             /* 这个数据一定不是第一次写了, 因此必然对应一个有效的物理页 */
-            ppa = get_maptbl_ent(ssd, fp);
-            assert(ppa.ppa != UNMAPPED_PPA);
-
+            old_ppa = get_maptbl_ent(ssd, old_fp);
+#if DBG
+            assert(old_ppa.ppa != UNMAPPED_PPA);
+#endif //DBG
             /* 减少一次索引,如果之后该PPA已经无效,更新二级映射和反向映射 */
-            if (mark_page_invalid(ssd, &ppa)) {
-                set_maptbl_ent(ssd, fp, NULL);
-                set_rmap_ent(ssd, UNMAPPED_FINGERPRINT, &ppa);
+            if (mark_page_invalid(ssd, &old_ppa)) {
+                set_maptbl_ent(ssd, old_fp, NULL);
+                set_rmap_ent(ssd, UNMAPPED_FINGERPRINT, &old_ppa);
             }
         }
         
         /* 进行写入或者建立索引 */
-        fp = generate_fingerprint(ssd, lpn);
-        ppa = get_maptbl_ent(ssd, fp);
+        new_ppa = get_maptbl_ent(ssd, new_fp);
         
         /* 已经存在这个映射,只需要增加新的映射, 不需要真实的写 */
-        if (mapped_ppa(&ppa)) {
-            set_fingerprint(ssd, lpn, fp);
-            increase_pgrc(ssd, &ppa);
+        if (mapped_ppa(&new_ppa)) {
+            set_fingerprint(ssd, lpn, new_fp);
+            if(increase_pgrc(ssd, &new_ppa)){
+                printf("Mapped: [%liu] -> [%llu] -> [%llu]\n", lpn, new_fp, ppa2pgidx(ssd, &new_ppa));
+                printf("old_fp = %llu, old_ppa = %llu\n", old_fp, ppa2pgidx(ssd, &old_ppa));
+                fflush(stdin);
+            }
         }
         else {
             /* find a new page */
-            ppa = get_new_page(ssd);
+            new_ppa = get_new_page(ssd);
 
             /* update lpn->fingerprint */
-            set_fingerprint(ssd, lpn, fp);
+            set_fingerprint(ssd, lpn, new_fp);
             /* update fp->ppa */
-            set_maptbl_ent(ssd, fp, &ppa);
+            set_maptbl_ent(ssd, new_fp, &new_ppa);
             /* update ppa->fp */
-            set_rmap_ent(ssd, fp, &ppa); 
+            set_rmap_ent(ssd, new_fp, &new_ppa); 
 
-            mark_page_valid(ssd, &ppa, NULL);
+            mark_page_valid(ssd, &new_ppa, NULL);
 
             /* need to advance the write pointer here */
             ssd_advance_write_pointer(ssd);
@@ -1167,7 +1189,7 @@ uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
             swr.cmd = NAND_WRITE;
             swr.stime = req->stime;
             /* get latency statistics */
-            curlat = ssd_advance_status(ssd, &ppa, &swr);
+            curlat = ssd_advance_status(ssd, &new_ppa, &swr);
             maxlat = (curlat > maxlat) ? curlat : maxlat;
         }
     }
