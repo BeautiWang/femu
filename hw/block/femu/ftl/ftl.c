@@ -412,14 +412,14 @@ static void ssd_init_pzipf(struct ssd *ssd) {
 
     int unique_pg_nb = (int)((spp->tt_pgs * UNIQUE_RATIO));
 
-    ssd->Pzipf = g_malloc0(sizeof(double) * unique_pg_nb + 1);
+    ssd->Pzipf = g_malloc0(sizeof(double) * unique_pg_nb);
 
-    for (i=1; i<=unique_pg_nb; ++i) {
+    for (i=1; i<unique_pg_nb; ++i) {
         sum+=1/pow((double)i, a);
     }
 
     ssd->Pzipf[0] = 0.0;
-    for (i=1; i<=unique_pg_nb; ++i) {
+    for (i=1; i<unique_pg_nb; ++i) {
         ssd->Pzipf[i]=ssd->Pzipf[i-1]+1/pow((double)i, a)/sum;
     }
 }
@@ -429,8 +429,8 @@ static void ssd_init_maptbl_lpn_fp(struct ssd *ssd)
     int i;
     struct ssdparams *spp = &ssd->sp;
 
-    ssd->maptbl_lpn_fp = g_malloc0(sizeof(uint64_t) * (spp->tt_pgs + 1));
-    for (i = 0; i <= spp->tt_pgs; i++) {
+    ssd->maptbl_lpn_fp = g_malloc0(sizeof(uint64_t) * spp->tt_pgs);
+    for (i = 0; i < spp->tt_pgs; i++) {
         ssd->maptbl_lpn_fp[i] = UNMAPPED_FINGERPRINT;
     }
 }
@@ -439,8 +439,8 @@ static void ssd_init_maptbl_fp_ppa(struct ssd *ssd) {
     int i;
     struct ssdparams *spp = &ssd->sp;
 
-    ssd->maptbl_fp_ppa = g_malloc0(sizeof(struct ppa) * (spp->tt_pgs + 1));
-    for (i = 0; i <= spp->tt_pgs; i++) {
+    ssd->maptbl_fp_ppa = g_malloc0(sizeof(struct ppa) * spp->tt_pgs);
+    for (i = 0; i < spp->tt_pgs; i++) {
         ssd->maptbl_fp_ppa[i].ppa = UNMAPPED_PPA;
     }
 }
