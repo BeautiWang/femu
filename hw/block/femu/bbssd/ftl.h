@@ -2,6 +2,7 @@
 #define __FEMU_FTL_H
 
 #include "../nvme.h"
+#include "./buffer.h"
 
 #define INVALID_PPA     (~(0ULL))
 #define INVALID_LPN     (~(0ULL))
@@ -116,12 +117,17 @@ struct ssdparams {
     int luns_per_ch;  /* # of LUNs per channel */
     int nchs;         /* # of channels in the SSD */
 
+    int buffersz;      /* buffer size in Bytes */
+    int buffer_rd_lat;/* buffer read latency in nanoseconds */
+    int buffer_wr_lat;/* buffer program latency in nanoseconds */
+
     int pg_rd_lat;    /* NAND page read latency in nanoseconds */
     int pg_wr_lat;    /* NAND page program latency in nanoseconds */
     int blk_er_lat;   /* NAND block erase latency in nanoseconds */
     int ch_xfer_lat;  /* channel transfer latency for one page in nanoseconds
                        * this defines the channel bandwith
                        */
+
 
     double gc_thres_pcent;
     int gc_thres_lines;
@@ -202,6 +208,8 @@ struct ssd {
     uint64_t *rmap;     /* reverse mapptbl, assume it's stored in OOB */
     struct write_pointer wp;
     struct line_mgmt lm;
+
+    struct buffer_info *buffer;
 
     /* lockless ring for communication with NVMe IO thread */
     struct rte_ring **to_ftl;

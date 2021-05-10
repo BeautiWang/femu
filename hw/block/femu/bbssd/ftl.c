@@ -243,6 +243,10 @@ static void ssd_init_params(struct ssdparams *spp)
     spp->luns_per_ch = 8;
     spp->nchs = 8;
 
+    spp->buffersz = 16384;  /* 16MB */
+    spp->buffer_rd_lat = BUFFER_READ_LATENCY;
+    spp->buffer_wr_lat = BUFFER_PROG_LATENCY;
+
     spp->pg_rd_lat = NAND_READ_LATENCY;
     spp->pg_wr_lat = NAND_PROG_LATENCY;
     spp->blk_er_lat = NAND_ERASE_LATENCY;
@@ -280,7 +284,6 @@ static void ssd_init_params(struct ssdparams *spp)
     spp->gc_thres_pcent_high = 0.95;
     spp->gc_thres_lines_high = (int)((1 - spp->gc_thres_pcent_high) * spp->tt_lines);
     spp->enable_gc_delay = true;
-
 
     check_params(spp);
 }
@@ -339,6 +342,17 @@ static void ssd_init_ch(struct ssd_channel *ch, struct ssdparams *spp)
     ch->busy = 0;
 }
 
+static void ssd_init_buffer(struct ssd *ssd)
+{
+    struct ssdparams *ssp = &ssd->sp;
+    ssd->buffer = (tAVLTree *)avlTreeCreate((void *)keyCompareFunc, (void *)freeFunc);
+    
+    ssd->buffer->max_buffer_sector = ssp->buffersz / ssp->secsz;
+    ssd->buffer->count = 0;
+    ssd->
+
+}
+
 static void ssd_init_maptbl(struct ssd *ssd)
 {
     struct ssdparams *spp = &ssd->sp;
@@ -373,6 +387,9 @@ void ssd_init(FemuCtrl *n)
     for (int i = 0; i < spp->nchs; i++) {
         ssd_init_ch(&ssd->ch[i], spp);
     }
+
+    /* initialize buffer */
+    ssd_init_buffer(ssd);
 
     /* initialize maptbl */
     ssd_init_maptbl(ssd);
@@ -818,6 +835,9 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     }
 
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
+
+        insert_to_buffer();
+
         ppa = get_maptbl_ent(ssd, lpn);
         if (mapped_ppa(&ppa)) {
             /* update old page information first */
