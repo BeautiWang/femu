@@ -1,13 +1,13 @@
-#include "./buffer.h"
-
+#include <stdlib.h>
+#include "avlTree.h"
 
 /******************************************************************** 
 * 
 * avlTreeHigh(TREE_NODE *pNode)
 * 
-* Calculate height of the tree
+* 计算当前树的高度
 *  
-* Returns: height of the tree
+* Returns         : 树的高度
 * 
 *********************************************************************/ 
 int avlTreeHigh(TREE_NODE *pNode)
@@ -21,6 +21,7 @@ int avlTreeHigh(TREE_NODE *pNode)
 
 	return (1+((lh>rh)?lh:rh));
 }
+
 
 /******************************************************************** 
 * 
@@ -109,6 +110,7 @@ int avlTreeCheck(tAVLTree *pTree , TREE_NODE *pNode)
 *        /                                                
 *       A0                                                 
 *                                              
+
 *                                              
 **********************************************************************/
 void R_Rotate(TREE_NODE **ppNode)
@@ -391,16 +393,6 @@ void AVL_TREE_LOCK
  int timeout
  )
 {
-	if(!pTree
-#if OS==3 || OS==4		
-		|| !pTree->sem
-#endif		
-		)
-		return;
-
-#if OS==3 || OS==4
-	semTake(pTree->sem,timeout);
-#endif
 	return;
 }
 
@@ -418,16 +410,6 @@ void AVL_TREE_UNLOCK
  tAVLTree *pTree
  )
 {
-	if(!pTree
-#if OS==3 || OS==4		
-		|| !pTree->sem
-#endif		
-		)
-		return;
-
-#if OS==3 || OS==4
-	semGive(pTree->sem);
-#endif
 	return;
 }
 
@@ -828,7 +810,6 @@ int avlTreeRemove
  TREE_NODE *pRemoveNode
  )
 {
-	int compFlag = 0;
 	TREE_NODE *tree_root = AVL_NULL;
 	TREE_NODE *p = AVL_NULL;
 	TREE_NODE *root_p = AVL_NULL;
@@ -867,7 +848,6 @@ int avlTreeRemove
 	{
 		TREE_NODE *prev = AVL_NULL;
 		TREE_NODE *next = AVL_NULL;
-		TREE_NODE *r_child = AVL_NULL;
 		root_p = pRemoveNode;
 		p = pRemoveNode->right_child;
 		while(p->left_child)
@@ -1042,15 +1022,6 @@ tAVLTree *avlTreeCreate(int *keyCompareFunc,int *freeFunc)
 #ifdef ORDER_LIST_WANTED
 		pTree->pListHeader = pTree->pListTail = AVL_NULL;
 #endif
-
-#if OS==3 || OS==4 
-		pTree->sem = semBCreate(0 , 1);
-		if(!pTree->sem)
-		{
-			free((void *)pTree);
-			return (tAVLTree *)0;
-		}
-#endif
 	}
 
 	return (tAVLTree *)pTree;
@@ -1061,6 +1032,7 @@ tAVLTree *avlTreeCreate(int *keyCompareFunc,int *freeFunc)
 /*******************************************************************/
 /*
 ★描述            :  删除一个节点
+
 ★参数描述: 
 pTree:树结构的指针
 pDelNode : 待删除的节点指针
@@ -1104,7 +1076,7 @@ int avlTreeDestroy
 	if(!pTree)
 		return 0;
 
-	while(pNode = pTree->pTreeHeader)
+	while((pNode = pTree->pTreeHeader) != NULL)
 	{
 		avlTreeDel(pTree,pNode);
 		AVL_TREENODE_FREE(pTree, pNode);
@@ -1112,9 +1084,6 @@ int avlTreeDestroy
 
 	if(!pTree->count || !pTree->pTreeHeader)
 	{
-#if OS==3 || OS==4
-		semDelete(pTree->sem);
-#endif
 		free((void *)pTree);
 		return 1;
 	}
@@ -1148,7 +1117,7 @@ int avlTreeFlush
 	if(!pTree->count || !pTree->pTreeHeader)
 		return 1;
 
-	while(pNode = pTree->pTreeHeader)
+	while((pNode = pTree->pTreeHeader) != NULL)
 	{
 		avlTreeDel(pTree,pNode);
 		AVL_TREENODE_FREE(pTree, pNode);
@@ -1163,6 +1132,7 @@ int avlTreeFlush
 /*******************************************************************/
 /*
 ★描述            :  增加一个节点
+
 ★参数描述: 
 pTree:树结构的指针
 pInsertNode : 待添加的节点指针
@@ -1194,6 +1164,7 @@ int avlTreeAdd
 /*******************************************************************/
 /*
 ★描述            : 根据关键字结构来查询一个节点是否存在
+
 ★参数描述: 
 pTree:树结构的指针
 pKeyNode : 关键字结构指针
@@ -1217,7 +1188,8 @@ TREE_NODE *avlTreeFind
 /**************************AVL TREE API*****************************/
 /*******************************************************************/
 /*
-★描述            : 获取树里面的所有节点总数
+★描述: 获取树里面的所有节点总数
+
 ★参数描述: 
 pTree:树结构的指针
 ★返回值      :
@@ -1236,10 +1208,10 @@ unsigned int avlTreeCount
 
 int keyCompareFunc(TREE_NODE *p , TREE_NODE *p1)
 {
-	struct buffer_group *T1 = AVL_NULL, *T2 = AVL_NULL;
+	struct buffer_group *T1=NULL,*T2=NULL;
 
-	T1 = (struct buffer_group*)p;
-	T2 = (struct buffer_group*)p1;
+	T1=(struct buffer_group*)p;
+	T2=(struct buffer_group*)p1;
 
 
 	if(T1->group< T2->group) return 1;
@@ -1248,15 +1220,14 @@ int keyCompareFunc(TREE_NODE *p , TREE_NODE *p1)
 	return 0;
 }
 
+
 int freeFunc(TREE_NODE *pNode)
 {
-	
-	if(pNode != AVL_NULL)
+	if(pNode!=NULL)
 	{
-		free((void *)pNode);
+		free(pNode);
 	}
 	
-	
-	pNode = AVL_NULL;
+	pNode=NULL;
 	return 1;
 }

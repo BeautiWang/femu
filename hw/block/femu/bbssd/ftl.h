@@ -1,8 +1,12 @@
 #ifndef __FEMU_FTL_H
 #define __FEMU_FTL_H
 
+#include <assert.h>
+#include <stdbool.h>
 #include "../nvme.h"
-#include "./buffer.h"
+#include "./avlTree.h"
+
+#define BUFFER_DEBUG
 
 #define INVALID_PPA     (~(0ULL))
 #define INVALID_LPN     (~(0ULL))
@@ -241,5 +245,24 @@ void ssd_init(FemuCtrl *n);
 #else
 #define ftl_assert(expression)
 #endif
+
+
+/******************Buffer*/
+
+enum {
+    BUFFER_READ =  3,
+    BUFFER_WRITE = 4,
+
+    BUFFER_READ_LATENCY = 1000,
+    BUFFER_PROG_LATENCY = 1000,
+};
+
+bool buffer_need_flush(struct ssd *ssd);
+uint64_t buffer_eviction(struct ssd *ssd, struct nand_cmd *ncmd);
+uint64_t insert_to_buffer(struct ssd *ssd, uint64_t lpn, struct nand_cmd *ncmd);
+uint64_t check_buffer(struct ssd *ssd, NvmeRequest *req, uint64_t lpn);
+uint64_t read_flash(struct ssd *ssd, NvmeRequest *req, uint64_t lpn);
+
+/**************Buffer End*/
 
 #endif
