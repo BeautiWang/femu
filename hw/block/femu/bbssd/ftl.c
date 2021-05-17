@@ -228,7 +228,11 @@ static void check_params(struct ssdparams *spp)
      * we are using a general write pointer increment method now, no need to
      * force luns_per_ch and nchs to be power of 2
      */
-
+#ifdef BUFFER_DEBUG
+    if (BUFFER_TYPE == BUFFER_RW_PARTITION_STATIC) {
+        assert(spp->buffersz == spp->buffersz_r + spp->buffersz_w);
+    }
+#endif //BUFFER_DEBUG
     //ftl_assert(is_power_of_2(spp->luns_per_ch));
     //ftl_assert(is_power_of_2(spp->nchs));
 }
@@ -243,7 +247,10 @@ static void ssd_init_params(struct ssdparams *spp)
     spp->luns_per_ch = 8;
     spp->nchs = 8;
 
-    spp->buffersz = 16384;  /* 16MB */
+    spp->buffersz = 16777216;  /* 16MB */
+    spp->buffersz_r = 8388608; /*  8MB */
+    spp->buffersz_w = 8388608; /*  8MB */
+
     spp->buffer_rd_lat = BUFFER_READ_LATENCY;
     spp->buffer_wr_lat = BUFFER_PROG_LATENCY;
 
@@ -345,9 +352,29 @@ static void ssd_init_ch(struct ssd_channel *ch, struct ssdparams *spp)
 static void ssd_init_buffer(struct ssd *ssd)
 {
     struct ssdparams *ssp = &ssd->sp;
-   
-    ssd->buffer = (tAVLTree *)avlTreeCreate((void *)keyCompareFunc, (void *)freeFunc);
-    ssd->buffer->max_buffer_sector = ssp->buffersz / ssp->secsz;
+    switch (BUFFER_TYPE)
+    {
+    case BUFFER_WRITE_ONLY:
+    case BUFFER_RW_HYBRID:
+        ssd->wbuffer = (tAVLTree *)avlTreeCreate((void *)keyCompareFunc, (void *)freeFunc);
+        ssd->wbuffer->max_buffer_sector = ssp->buffersz / ssp->secsz;
+        ssd->rbuffer = NULL; 
+        break;
+    case BUFFER_RW_PARTITION_STATIC:
+        ssd->wbuffer = (tAVLTree *)avlTreeCreate((void *)keyCompareFunc, (void *)freeFunc);
+        ssd->wbuffer->max_buffer_sector = ssp->buffersz_w / ssp->secsz;
+        ssd->rbuffer = (tAVLTree *)avlTreeCreate((void *)keyCompareFunc, (void *)freeFunc);
+        ssd->rbuffer->max_buffer_sector = ssp->buffersz_r / ssp->secsz;
+        break;
+    case BUFFER_RW_PARTITION_DYNAMIC:
+        /* Not Implement Yet */
+        assert(0);
+        break;
+
+    default:
+        assert(0);
+        break;
+    }
 }
 
 static void ssd_init_maptbl(struct ssd *ssd)
@@ -772,13 +799,301 @@ static int do_gc(struct ssd *ssd, bool force)
     return 0;
 }
 
+/* 
+* 判断buffer是否还能容纳一个page
+* 返回true: 已满
+* 返回false：未满
+*/
+static inline bool buffer_full(struct ssd *ssd, tAVLTree *buffer) {
+    return buffer->max_buffer_sector < buffer->buffer_sector_count + ssd->sp.secs_per_pg;
+}
+
+/*
+* 仅仅用于删除读buffer中的固定结点（用于读写buffer同步）
+*/
+static void buffer_delete_node(struct ssd *ssd, tAVLTree *buffer, uint64_t lpn) {
+    struct buffer_group *node = NULL, key;
+    key.group = lpn;
+    node = (struct buffer_group*)avlTreeFind(buffer, (TREE_NODE *)&key);
+
+    if (node == NULL) return;
+    //从avl树删除结点
+    avlTreeDel(buffer, (TREE_NODE *)node);
+    //从双向链表删除结点
+    if (node == buffer->buffer_head) {
+        if (buffer->buffer_head->LRU_link_next == NULL) {//只有Node这一个结点
+            buffer->buffer_head = NULL;
+            buffer->buffer_tail = NULL;
+        }
+        else {
+            buffer->buffer_head = buffer->buffer_head->LRU_link_next;
+            buffer->buffer_head->LRU_link_pre = NULL;
+        }
+    }
+    else if (node == buffer->buffer_tail) {
+        buffer->buffer_tail = buffer->buffer_tail->LRU_link_pre;
+        buffer->buffer_tail->LRU_link_next = NULL;
+    }
+    else {
+        node->LRU_link_pre->LRU_link_next = node->LRU_link_next;
+        node->LRU_link_next->LRU_link_pre = node->LRU_link_pre;
+    }
+    node->LRU_link_next = NULL;
+    node->LRU_link_pre = NULL;
+    AVL_TREENODE_FREE(buffer, (TREE_NODE *)node);
+    node = NULL;
+
+#ifdef BUFFER_DEBUG
+    assert(buffer->buffer_sector_count >= ssd->sp.secs_per_pg);
+#endif
+
+    buffer->buffer_sector_count -= ssd->sp.secs_per_pg;
+
+    return;    
+}
+
+/* 将node结点（原本就属于buffer）移动到buffer的头部 */
+static void buffer_move_to_head(tAVLTree *buffer, struct buffer_group *node) {
+    if (buffer->buffer_head == node) return;
+    
+    // 将node摘出来
+    if (buffer->buffer_tail == node) {
+        buffer->buffer_tail = node->LRU_link_pre;
+        node->LRU_link_pre->LRU_link_next = NULL;
+    }
+    else {
+        node->LRU_link_pre->LRU_link_next = node->LRU_link_next;
+        node->LRU_link_next->LRU_link_pre = node->LRU_link_pre;
+    }
+
+    // 将node插入头部
+    node->LRU_link_next = buffer->buffer_head;
+    buffer->buffer_head->LRU_link_pre = node;
+    node->LRU_link_pre = NULL;
+    buffer->buffer_head = node;
+}
+
+
+/* 从buffer中找到指定lpn的结点，并返回其地址 */
+static struct buffer_group* check_buffer(tAVLTree *buffer, uint64_t lpn) {
+    struct buffer_group *buffer_node = NULL, key;
+    key.group = lpn;
+    buffer_node = (struct buffer_group*)avlTreeFind(buffer, (TREE_NODE *)&key);
+    return buffer_node;
+}
+
+
+/* 从闪存读取内容 
+* 1. 如果需要，会存储到buffer中
+* 2. 返回时延
+*/
+static uint64_t read_flash(struct ssd *ssd, NvmeRequest *req, uint64_t lpn) {
+    uint64_t lat = 0;
+    tAVLTree *buffer = NULL;
+
+    if (BUFFER_TYPE == BUFFER_RW_HYBRID) {
+        buffer = ssd->wbuffer;
+    }
+    else if (BUFFER_TYPE == BUFFER_RW_PARTITION_STATIC || 
+             BUFFER_TYPE == BUFFER_RW_PARTITION_DYNAMIC) {
+        buffer = ssd->rbuffer;
+    }
+
+    if (buffer) {
+        struct buffer_group *new_node = (struct buffer_group *)malloc(sizeof(struct buffer_group));
+        memset(new_node, 0, sizeof(struct buffer_group));
+
+        new_node->group = lpn;
+        new_node->dirty = false;
+        new_node->LRU_link_pre = NULL;
+        new_node->LRU_link_next = buffer->buffer_head;
+
+        if (buffer->buffer_head != NULL){
+            buffer->buffer_head->LRU_link_pre = new_node;
+        }
+        else{
+            buffer->buffer_tail = new_node;
+        }
+        buffer->buffer_head = new_node;
+        new_node->LRU_link_pre = NULL;
+        avlTreeAdd(buffer, (TREE_NODE *)new_node);
+
+        buffer->buffer_sector_count += ssd->sp.secs_per_pg;
+        lat += BUFFER_PROG_LATENCY;
+    }
+
+    struct ppa ppa = get_maptbl_ent(ssd, lpn);
+    if (!mapped_ppa(&ppa) || !valid_ppa(ssd, &ppa)) {
+        return lat;
+    }
+
+    struct nand_cmd srd;
+    srd.type = USER_IO;
+    srd.cmd = NAND_READ;
+    srd.stime = req->stime;
+
+    lat = ssd_advance_status(ssd, &ppa, &srd);    
+
+    return lat;
+}
+
+/* 从buffer中替换尾结点，与策略无关，只看dirty位 */
+static uint64_t buffer_eviction (struct ssd *ssd, tAVLTree *buffer, NvmeRequest *req) {
+    uint64_t lat=0;
+    struct ssdparams *ssp = &(ssd->sp);
+    
+    struct buffer_group *pt = buffer->buffer_tail;
+    uint64_t lpn = pt->group;
+
+    if (pt->dirty) {
+        // 写入闪存
+        struct ppa ppa = get_maptbl_ent(ssd, lpn);
+        if (mapped_ppa(&ppa)) {
+            /* update old page information first */
+            mark_page_invalid(ssd, &ppa);
+            set_rmap_ent(ssd, INVALID_LPN, &ppa);
+        }
+
+        /* new write */
+        ppa = get_new_page(ssd);
+        /* update maptbl */
+        set_maptbl_ent(ssd, lpn, &ppa);
+        /* update rmap */
+        set_rmap_ent(ssd, lpn, &ppa);
+
+        mark_page_valid(ssd, &ppa);
+
+        /* need to advance the write pointer here */
+        ssd_advance_write_pointer(ssd);
+
+        struct nand_cmd swr;
+        swr.type = USER_IO;
+        swr.cmd = NAND_WRITE;
+        swr.stime = req->stime;
+        /* get latency statistics */
+        lat += ssd_advance_status(ssd, &ppa, &swr);
+    }
+
+    // 在avl树中删除对应元素
+    avlTreeDel(buffer, (TREE_NODE *)pt);
+    if (buffer->buffer_head->LRU_link_next == NULL){
+        buffer->buffer_head = NULL;
+        buffer->buffer_tail = NULL;
+    }
+    else{
+        buffer->buffer_tail = buffer->buffer_tail->LRU_link_pre;
+        buffer->buffer_tail->LRU_link_next = NULL;
+    }
+    pt->LRU_link_next = NULL;
+    pt->LRU_link_pre = NULL;
+    AVL_TREENODE_FREE(buffer, (TREE_NODE *)pt);
+    pt = NULL;
+
+    buffer->buffer_sector_count -= ssp->secs_per_pg;
+
+    return lat;
+}
+
+/*
+将请求从flash读取到buffer中
+*/
+static uint64_t read_to_buffer(struct ssd *ssd, NvmeRequest *req, uint64_t lpn) {
+    uint64_t lat = 0;
+    
+    switch (BUFFER_TYPE)
+    {
+    case BUFFER_RW_HYBRID:
+        if (buffer_full(ssd, ssd->wbuffer)) {
+            lat += buffer_eviction(ssd, ssd->wbuffer, req);
+        }
+        lat += read_flash(ssd, req, lpn);
+        break;
+    
+    case BUFFER_RW_PARTITION_STATIC:
+        if (buffer_full(ssd, ssd->rbuffer)) {
+            lat += buffer_eviction(ssd, ssd->rbuffer, req);
+        }
+        lat += read_flash(ssd, req, lpn);
+        break;
+
+    case BUFFER_RW_PARTITION_DYNAMIC:
+        /* Not implement yet. */
+        exit(0);
+        break;
+
+
+    case BUFFER_WRITE_ONLY:
+    default:
+        /* Should not happen. */
+        exit(0);
+        break;
+    }
+
+    return lat;
+}
+
+static uint64_t buffer_read(struct ssd *ssd, NvmeRequest *req, uint64_t lpn) {
+    uint64_t lat = 0;
+
+    // 首先检查写 buffer
+    struct buffer_group *wnode = check_buffer(ssd->wbuffer, lpn);
+    struct buffer_group *rnode = NULL;
+    
+    //写buffer命中
+    if (wnode) {
+        ssd->wbuffer->read_hit ++;
+        lat += BUFFER_READ_LATENCY;
+        buffer_move_to_head (ssd->wbuffer, wnode);
+        return lat;
+    }
+
+    //写buffer未命中
+    ssd->wbuffer->read_miss++;
+    switch (BUFFER_TYPE)
+    {
+    case BUFFER_WRITE_ONLY:
+        lat += read_flash(ssd, req, lpn);
+        lat += BUFFER_READ_LATENCY;
+        break;
+    
+    case BUFFER_RW_HYBRID:
+        lat += read_to_buffer(ssd, req, lpn);
+        lat += BUFFER_READ_LATENCY;
+        break;
+    
+    case BUFFER_RW_PARTITION_STATIC:
+        rnode = check_buffer(ssd->rbuffer, lpn);
+        if (rnode) {
+            ssd->rbuffer->read_hit ++;
+            buffer_move_to_head(ssd->rbuffer, rnode);
+        }
+        //读入读buffer
+        else {
+            ssd->rbuffer->read_miss ++;
+            lat += read_to_buffer(ssd, req, lpn);
+        }
+        lat += BUFFER_READ_LATENCY;
+        break;
+
+    case BUFFER_RW_PARTITION_DYNAMIC:
+        /* Not Implement Yet. */
+        exit(0);
+        break;
+    default:
+        exit(0);
+        break;
+    }
+
+    return lat;
+}
+
 static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
 {
     struct ssdparams *spp = &ssd->sp;
     uint64_t lba = req->slba;
     int nsecs = req->nlb;
     uint64_t start_lpn = lba / spp->secs_per_pg;
-    uint64_t end_lpn = (lba + nsecs) / spp->secs_per_pg;
+    uint64_t end_lpn = nsecs ? (lba + nsecs - 1) / spp->secs_per_pg : (lba + nsecs) / spp->secs_per_pg;
     uint64_t lpn;
     uint64_t sublat, maxlat = 0;
 
@@ -788,11 +1103,70 @@ static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
 
     /* normal IO read path */
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
-        sublat = check_buffer(ssd, req, lpn);
+        sublat = buffer_read(ssd, req, lpn);
         maxlat = (sublat > maxlat) ? sublat : maxlat;
     }
 
     return maxlat;
+}
+
+/*
+* 1. 调用条件：已经buffer中没有当前lpn的数据（读、写buffer都要满足）
+* 2. 加入一个buffer结点，并返回buffer编程的时间。
+*/
+static uint64_t write_to_buffer(struct ssd *ssd, NvmeRequest *req, uint64_t lpn) {
+    uint64_t lat=0;
+    struct buffer_group *new_node = (struct buffer_group *)malloc(sizeof(struct buffer_group));
+    if (new_node == NULL) {
+        assert(0);
+    }
+    memset(new_node, 0, sizeof(struct buffer_group));
+
+    new_node->group = lpn;
+    new_node->dirty = true;
+    new_node->LRU_link_pre = NULL;
+    new_node->LRU_link_next = ssd->wbuffer->buffer_head;
+    if (ssd->wbuffer->buffer_head != NULL){
+        ssd->wbuffer->buffer_head->LRU_link_pre = new_node;
+    }
+    else{
+        ssd->wbuffer->buffer_tail = new_node;
+    }
+    ssd->wbuffer->buffer_head = new_node;
+    new_node->LRU_link_pre = NULL;
+    avlTreeAdd(ssd->wbuffer, (TREE_NODE *)new_node);
+
+    lat += BUFFER_PROG_LATENCY;
+    ssd->wbuffer->buffer_sector_count += ssd->sp.secs_per_pg;
+
+    return lat;
+}
+
+static uint64_t buffer_write(struct ssd *ssd, NvmeRequest *req, uint64_t lpn) {
+    uint64_t lat = 0;
+    
+    //首先判断对应的lpn是否已经在buffer里了
+    struct buffer_group *wnode = check_buffer(ssd->wbuffer, lpn);
+
+    // write_buffer不命中
+    if (wnode == NULL) {
+        ssd->wbuffer->write_miss++;
+        if (BUFFER_TYPE == BUFFER_RW_PARTITION_STATIC) {
+            buffer_delete_node(ssd, ssd->rbuffer, lpn);
+        }
+        if (buffer_full(ssd, ssd->wbuffer)) {
+            lat += buffer_eviction(ssd, ssd->wbuffer, req);
+        }
+        lat += write_to_buffer(ssd, req, lpn);
+    }
+    else {
+        ssd->wbuffer->write_hit++;
+        wnode->dirty = true;
+        buffer_move_to_head(ssd->wbuffer, wnode);
+        lat += BUFFER_PROG_LATENCY;
+    }
+
+    return lat;
 }
 
 static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
@@ -818,11 +1192,7 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     }
     
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
-        struct nand_cmd bwr;    //buffer write
-        bwr.type = USER_IO;
-        bwr.cmd = BUFFER_WRITE;
-        bwr.stime = req->stime;
-        curlat = insert_to_buffer(ssd, lpn, &bwr);
+        curlat = buffer_write(ssd, req, lpn);
         maxlat = (curlat > maxlat) ? curlat : maxlat;
     }
 
@@ -886,194 +1256,29 @@ static void *ftl_thread(void *arg)
     return NULL;
 }
 
-bool buffer_need_flush (struct ssd *ssd) {
-    struct ssdparams *ssp = &(ssd->sp);
-    int sector_count = ssp->secs_per_pg;
-
-    return ssd->buffer->max_buffer_sector < (sector_count + ssd->buffer->buffer_sector_count);
-}
-
-uint64_t buffer_eviction(struct ssd *ssd, struct nand_cmd *ncmd) {
-    struct ssdparams *ssp = &(ssd->sp);
-    struct buffer_group *pt = ssd->buffer->buffer_tail;
-    uint64_t lat = 0;
-    uint64_t lpn = pt->group;
-
-    if (pt->dirty) {
-        // 写入闪存
-        struct ppa ppa = get_maptbl_ent(ssd, lpn);
-        if (mapped_ppa(&ppa)) {
-            /* update old page information first */
-            mark_page_invalid(ssd, &ppa);
-            set_rmap_ent(ssd, INVALID_LPN, &ppa);
-        }
-
-        /* new write */
-        ppa = get_new_page(ssd);
-        /* update maptbl */
-        set_maptbl_ent(ssd, lpn, &ppa);
-        /* update rmap */
-        set_rmap_ent(ssd, lpn, &ppa);
-
-        mark_page_valid(ssd, &ppa);
-
-        /* need to advance the write pointer here */
-        ssd_advance_write_pointer(ssd);
-
-        struct nand_cmd swr;
-        swr.type = USER_IO;
-        swr.cmd = NAND_WRITE;
-        swr.stime = ncmd->stime;
-        /* get latency statistics */
-        lat += ssd_advance_status(ssd, &ppa, &swr);
+void print_buffer(struct ssd *ssd) {
+    printf("*********************************\n");
+    if (BUFFER_TYPE == BUFFER_WRITE_ONLY) {
+        printf("Buffer类型：写buffer, buffer_size=%u sectors\n", ssd->wbuffer->max_buffer_sector);
     }
-    // 在avl树中删除对应元素
-    
-    avlTreeDel(ssd->buffer, (TREE_NODE *)pt);
-    if (ssd->buffer->buffer_head->LRU_link_next == NULL){
-        ssd->buffer->buffer_head = NULL;
-        ssd->buffer->buffer_tail = NULL;
+    else if (BUFFER_TYPE == BUFFER_RW_HYBRID) {
+        printf("Buffer类型：读写混合buffer, buffer_size=%u sectors\n", ssd->wbuffer->max_buffer_sector);
     }
-    else{
-        ssd->buffer->buffer_tail = ssd->buffer->buffer_tail->LRU_link_pre;
-        ssd->buffer->buffer_tail->LRU_link_next = NULL;
+    else if (BUFFER_TYPE == BUFFER_RW_PARTITION_STATIC) {
+        printf("Buffer类型：读写混合buffer\n");
+        printf("write buffer_size=\"%u\"Bytes, read buffer_size=%u sectors\n", ssd->wbuffer->max_buffer_sector, ssd->rbuffer->max_buffer_sector);
     }
-    pt->LRU_link_next = NULL;
-    pt->LRU_link_pre = NULL;
-    AVL_TREENODE_FREE(ssd->buffer, (TREE_NODE *)pt);
-    pt = NULL;
-
-    ssd->buffer->buffer_sector_count -= ssp->secs_per_pg;
-
-    return lat;
-}
-
-uint64_t insert_to_buffer(struct ssd *ssd, uint64_t lpn, struct nand_cmd *ncmd) {
-#ifdef BUFFER_DEBUG
-    assert(ncmd->cmd == BUFFER_WRITE);
-    assert(ncmd->stime != 0);
-#endif
-    uint64_t lat = 0;
-
-    struct ssdparams *ssp = &(ssd->sp);
-    int sector_count = ssp->secs_per_pg;
-
-    struct buffer_group *buffer_node = NULL, *new_node = NULL, key;
-
-    key.group = lpn;
-    buffer_node = (struct buffer_group*)avlTreeFind(ssd->buffer, (TREE_NODE *)&key);
-     
-    //未命中，当前LPN不在buffer中
-    if (buffer_node == NULL) {
-        ssd->buffer->write_miss ++;
-
-        //buffer空间不足，需要下刷
-        if (buffer_need_flush(ssd)) {
-            //下刷buffer中的这个lpn
-            lat += buffer_eviction(ssd, ncmd);
-        }
-        new_node = NULL;
-        new_node = (struct buffer_group *)malloc(sizeof(struct buffer_group));
-        memset(new_node, 0, sizeof(struct buffer_group));
-
-        new_node->group = lpn;
-        new_node->dirty = true;
-        new_node->LRU_link_pre = NULL;
-		new_node->LRU_link_next = ssd->buffer->buffer_head;
-        if (ssd->buffer->buffer_head != NULL){
-			ssd->buffer->buffer_head->LRU_link_pre = new_node;
-		}
-		else{
-			ssd->buffer->buffer_tail = new_node;
-		}
-        ssd->buffer->buffer_head = new_node;
-		new_node->LRU_link_pre = NULL;
-		avlTreeAdd(ssd->buffer, (TREE_NODE *)new_node);
-
-        lat += BUFFER_PROG_LATENCY;
-        ssd->buffer->buffer_sector_count += sector_count;
-
+    printf("*************wbuffer*************\n");
+    tAVLTree *buffer = ssd->wbuffer;
+    printf("capacity = %u, used = %u\n", buffer->max_buffer_sector, buffer->buffer_sector_count);
+    printf("read hit = %lu, read miss = %lu\n", buffer->read_hit, buffer->read_miss);
+    printf("write hit = %lu, write miss = %lu\n", buffer->write_hit, buffer->write_miss);
+    if (ssd->rbuffer) {
+        printf("*************rbuffer*************\n");
+        buffer = ssd->rbuffer;
+        printf("capacity = %u, used = %u\n", buffer->max_buffer_sector, buffer->buffer_sector_count);
+        printf("read hit = %lu, read miss = %lu\n", buffer->read_hit, buffer->read_miss);
+        printf("write hit = %lu, write miss = %lu\n", buffer->write_hit, buffer->write_miss);
     }
-    //在buffer中命中
-    else {
-        ssd->buffer->write_hit ++;
-        buffer_node->dirty = true;
-        
-        if (ssd->buffer->buffer_head != buffer_node) {
-            if (ssd->buffer->buffer_tail == buffer_node)
-				{
-					ssd->buffer->buffer_tail = buffer_node->LRU_link_pre;
-					buffer_node->LRU_link_pre->LRU_link_next = NULL;
-				}
-				else if (buffer_node != ssd->buffer->buffer_head)
-				{
-					buffer_node->LRU_link_pre->LRU_link_next = buffer_node->LRU_link_next;
-					buffer_node->LRU_link_next->LRU_link_pre = buffer_node->LRU_link_pre;
-				}
-				buffer_node->LRU_link_next = ssd->buffer->buffer_head;
-				ssd->buffer->buffer_head->LRU_link_pre = buffer_node;
-				buffer_node->LRU_link_pre = NULL;
-				ssd->buffer->buffer_head = buffer_node;
-        }
-
-        lat += BUFFER_PROG_LATENCY;
-    }
-    return lat;
-}
-
-uint64_t read_flash(struct ssd *ssd, NvmeRequest *req, uint64_t lpn) {
-    uint64_t lat = 0;
-    struct ppa ppa = get_maptbl_ent(ssd, lpn);
-    if (!mapped_ppa(&ppa) || !valid_ppa(ssd, &ppa)) {
-        return lat;
-    }
-
-    struct nand_cmd srd;
-    srd.type = USER_IO;
-    srd.cmd = NAND_READ;
-    srd.stime = req->stime;
-
-    lat = ssd_advance_status(ssd, &ppa, &srd);
-
-    return lat;
-}
-
-uint64_t check_buffer(struct ssd *ssd, NvmeRequest *req, uint64_t lpn) {
-    uint64_t lat = 0;
-
-    //查找lpn
-    struct buffer_group *buffer_node = NULL, key;
-    key.group = lpn;
-    buffer_node = (struct buffer_group*)avlTreeFind(ssd->buffer, (TREE_NODE *)&key);
-
-    //buffer_未命中
-    if (buffer_node == NULL) {
-        ssd->buffer->read_miss ++;
-        lat += read_flash(ssd, req, lpn);
-    }
-    //在buffer中命中
-    else {
-        ssd->buffer->read_hit ++;
-        
-        if (ssd->buffer->buffer_head != buffer_node) {
-            if (ssd->buffer->buffer_tail == buffer_node)
-				{
-					ssd->buffer->buffer_tail = buffer_node->LRU_link_pre;
-					buffer_node->LRU_link_pre->LRU_link_next = NULL;
-				}
-				else if (buffer_node != ssd->buffer->buffer_head)
-				{
-					buffer_node->LRU_link_pre->LRU_link_next = buffer_node->LRU_link_next;
-					buffer_node->LRU_link_next->LRU_link_pre = buffer_node->LRU_link_pre;
-				}
-				buffer_node->LRU_link_next = ssd->buffer->buffer_head;
-				ssd->buffer->buffer_head->LRU_link_pre = buffer_node;
-				buffer_node->LRU_link_pre = NULL;
-				ssd->buffer->buffer_head = buffer_node;
-        }
-
-        lat += BUFFER_READ_LATENCY;
-    }
-
-    return lat;
+    printf("*********************************\n");
 }

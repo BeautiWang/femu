@@ -6,8 +6,6 @@
 #include "../nvme.h"
 #include "./avlTree.h"
 
-#define BUFFER_DEBUG
-
 #define INVALID_PPA     (~(0ULL))
 #define INVALID_LPN     (~(0ULL))
 #define UNMAPPED_PPA    (~(0ULL))
@@ -47,6 +45,8 @@ enum {
     FEMU_RESET_ACCT = 5,
     FEMU_ENABLE_LOG = 6,
     FEMU_DISABLE_LOG = 7,
+
+    FEMU_PRINT_BUFFER = 8,
 };
 
 
@@ -122,6 +122,8 @@ struct ssdparams {
     int nchs;         /* # of channels in the SSD */
 
     int buffersz;      /* buffer size in Bytes */
+    int buffersz_r;    /* read buffer size in Bytes */
+    int buffersz_w;    /* write buffer size in Bytes */
     int buffer_rd_lat;/* buffer read latency in nanoseconds */
     int buffer_wr_lat;/* buffer program latency in nanoseconds */
 
@@ -213,7 +215,8 @@ struct ssd {
     struct write_pointer wp;
     struct line_mgmt lm;
 
-    struct buffer_info *buffer;
+    tAVLTree *wbuffer; /* write buffer */
+    tAVLTree *rbuffer; /* read buffer */
 
     /* lockless ring for communication with NVMe IO thread */
     struct rte_ring **to_ftl;
@@ -257,11 +260,33 @@ enum {
     BUFFER_PROG_LATENCY = 1000,
 };
 
-bool buffer_need_flush(struct ssd *ssd);
-uint64_t buffer_eviction(struct ssd *ssd, struct nand_cmd *ncmd);
-uint64_t insert_to_buffer(struct ssd *ssd, uint64_t lpn, struct nand_cmd *ncmd);
-uint64_t check_buffer(struct ssd *ssd, NvmeRequest *req, uint64_t lpn);
-uint64_t read_flash(struct ssd *ssd, NvmeRequest *req, uint64_t lpn);
+enum {
+    BUFFER_WRITE_ONLY = 0,
+    BUFFER_RW_HYBRID = 1,
+    BUFFER_RW_PARTITION_STATIC = 2,
+    BUFFER_RW_PARTITION_DYNAMIC = 3,
+};
+
+#define BUFFER_DEBUG 1
+#define BUFFER_TYPE BUFFER_WRITE_ONLY
+
+
+// bool buffer_need_flush(struct ssd *ssd);
+
+// // read
+// uint64_t buffer_read(struct ssd *ssd, NvmeRequest *req, uint64_t lpn);
+// uint64_t read_wbuffer();
+// uint64_t read_rbuffer();
+// uint64_t read_flash(struct ssd *ssd, NvmeRequest *req, uint64_t lpn);
+
+// // write
+// uint64_t buffer_write();
+// uint64_t check_rbuffer(struct ssd *ssd, NvmeRequest *req, uint64_t lpn);
+// uint64_t insert_to_wbuffer();
+// uint64_t buffer_eviction();
+// uint64_t write_nand();
+
+void print_buffer(struct ssd *ssd);
 
 /**************Buffer End*/
 
